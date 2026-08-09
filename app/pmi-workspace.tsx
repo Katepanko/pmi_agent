@@ -20,6 +20,8 @@ type Attachment = {
   warnings?: string[];
 };
 
+type ArtifactFormat = "pptx" | "xlsx" | "docx" | "pdf" | "html";
+
 type Message = {
   id: string;
   role: "user" | "assistant";
@@ -30,11 +32,12 @@ type Message = {
   artifact?: {
     id: string;
     name: string;
-    format: "pptx";
+    format: ArtifactFormat;
     mimeType: string;
     url: string;
     size: number;
-    slideCount: number;
+    unitCount: number;
+    unitLabel: string;
     version: number;
   };
 };
@@ -134,6 +137,7 @@ function fileGlyph(type: string) {
   if (type === "pptx") return "PP";
   if (type === "pdf") return "PD";
   if (type === "docx") return "WD";
+  if (type === "html" || type === "htm") return "HT";
   if (["png", "jpg", "jpeg"].includes(type)) return "IM";
   return "FL";
 }
@@ -364,10 +368,10 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
       if ((error as Error).name !== "AbortError") {
         const detail = error instanceof Error ? error.message : "Generation failed.";
         const connectionIssue = /(?:API_KEY|_MODEL\b|provider key|authentication|unauthorized|could not be reached|connection)/i.test(detail);
-        const fileRequest = /\b(?:power\s*point|pptx?|presentation|slide\s*deck|deck|slides?)\b/i.test(userMessage.content);
+        const fileRequest = /\b(?:power\s*point|pptx?|presentation|slide\s*deck|deck|slides?|excel|xlsx|spreadsheet|workbook|word|docx|document|pdf|html|dashboard)\b/i.test(userMessage.content);
         const errorContent = connectionIssue
           ? `Model connection required\n\n${detail}\n\nAdd the provider key and configured model ID to the server environment. Uploaded files and project context remain in this chat.`
-          : `${fileRequest ? "PowerPoint generation failed" : "Generation failed"}\n\n${detail}\n\nYour report text, uploaded files, and project context remain available. Retry the request; no artifact was stored.`;
+          : `${fileRequest ? "File generation failed" : "Generation failed"}\n\n${detail}\n\nYour report text, uploaded files, and project context remain available. Retry the request; no artifact was stored.`;
         updateActiveChat((chat) => ({
           ...chat,
           messages: chat.messages.map((message) =>
@@ -734,13 +738,28 @@ function MessageView({ message, generating }: { message: Message; generating: bo
         {message.variant === "demo-report" ? <DemoReport /> : (
           <div className="streamed-content">{message.content}{generating && <span className="typing-cursor" />}</div>
         )}
-        {message.artifact && <a className="artifact-download" href={message.artifact.url} download={message.artifact.name}><span className={`file-glyph ${message.artifact.format}`}>{fileGlyph(message.artifact.format)}</span><span><strong>{message.artifact.name}</strong><small>{message.artifact.slideCount} slides · PowerPoint presentation · {fileSize(message.artifact.size)}</small></span><b>Download</b></a>}
+        {message.artifact && <ArtifactAttachment artifact={message.artifact} />}
         {!generating && message.content && message.variant !== "error" && (
           <div className="message-actions"><button type="button" onClick={() => void copyMessage()} aria-live="polite">{copied ? "Copied" : "Copy"}</button></div>
         )}
       </div>
     </article>
   );
+}
+
+function ArtifactAttachment({ artifact }: { artifact: NonNullable<Message["artifact"]> }) {
+  const labels: Record<ArtifactFormat, string> = {
+    pptx: "PowerPoint presentation",
+    xlsx: "Excel workbook",
+    docx: "Word document",
+    pdf: "PDF report",
+    html: "HTML dashboard",
+  };
+  return <a className="artifact-download" href={artifact.url} download={artifact.name}>
+    <span className={`file-glyph ${artifact.format}`}>{fileGlyph(artifact.format)}</span>
+    <span><strong>{artifact.name}</strong><small>{artifact.unitCount} {artifact.unitLabel} · {labels[artifact.format]} · {fileSize(artifact.size)}{artifact.version > 1 ? ` · v${artifact.version}` : ""}</small></span>
+    <b>Download</b>
+  </a>;
 }
 
 function DemoReport() {
@@ -782,7 +801,7 @@ function DemoReport() {
         <div><strong>Source coverage complete</strong><span>4 of 4 applicable files considered · material conflicts and gaps disclosed</span></div>
         <button>Inspect evidence →</button>
       </div>
-      <div className="draft-note"><span>Conversational workflow</span>Ask for a PowerPoint when you need the file; it will be generated and attached directly to that assistant message.</div>
+      <div className="draft-note"><span>Conversational workflow</span>Ask for PowerPoint, Excel, Word, PDF, or HTML when you need a file; it will be generated and attached directly to that assistant message after validation.</div>
     </div>
   );
 }

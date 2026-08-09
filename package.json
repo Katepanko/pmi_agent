@@ -14,9 +14,12 @@
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
+    "docx": "^9.5.1",
     "drizzle-orm": "0.45.2",
+    "exceljs": "^4.4.0",
     "fflate": "0.7.4",
     "next": "16.2.6",
+    "pdf-lib": "^1.17.1",
     "pptxgenjs": "^4.0.1",
     "react": "19.2.6",
     "react-dom": "19.2.6"

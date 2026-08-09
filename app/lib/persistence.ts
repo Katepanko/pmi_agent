@@ -1,13 +1,16 @@
 type RuntimeEnv = { DB?: D1Database };
 
+export type ArtifactFormat = "pptx" | "xlsx" | "docx" | "pdf" | "html";
+
 export type ArtifactRecord = {
   id: string;
   name: string;
-  format: "pptx";
+  format: ArtifactFormat;
   mimeType: string;
   url: string;
   size: number;
-  slideCount: number;
+  unitCount: number;
+  unitLabel: string;
   version: number;
 };
 
@@ -23,7 +26,8 @@ let schemaReady: Promise<void> | null = null;
 export async function ensureCoreSchema() {
   if (schemaReady) return schemaReady;
   const db = await database();
-  schemaReady = db.batch([
+  schemaReady = (async () => {
+    await db.batch([
     db.prepare(`CREATE TABLE IF NOT EXISTS projects (
       id TEXT PRIMARY KEY NOT NULL, user_id TEXT NOT NULL, name TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '', companies TEXT NOT NULL DEFAULT '',
@@ -67,14 +71,26 @@ export async function ensureCoreSchema() {
       chat_id TEXT NOT NULL, message_id TEXT NOT NULL, filename TEXT NOT NULL,
       mime_type TEXT NOT NULL, object_key TEXT NOT NULL, size_bytes INTEGER NOT NULL,
       report_type TEXT, version INTEGER NOT NULL DEFAULT 1, slide_count INTEGER,
-      presentation_json TEXT, created_at TEXT NOT NULL,
+      presentation_json TEXT, format TEXT NOT NULL DEFAULT 'pptx', unit_count INTEGER,
+      unit_label TEXT, model_json TEXT, parent_artifact_id TEXT, created_at TEXT NOT NULL,
       FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE SET NULL,
       FOREIGN KEY(chat_id) REFERENCES chats(id) ON DELETE CASCADE,
       FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE
     )`),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_artifacts_chat_created ON artifacts(chat_id, created_at)"),
     db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_artifacts_message ON artifacts(message_id)"),
-  ]).then(() => undefined).catch((error) => {
+    ]);
+    const columns = await db.prepare("PRAGMA table_info(artifacts)").all<{ name: string }>();
+    const names = new Set(columns.results.map((column) => column.name));
+    const additions = [
+      ["format", "ALTER TABLE artifacts ADD COLUMN format TEXT NOT NULL DEFAULT 'pptx'"],
+      ["unit_count", "ALTER TABLE artifacts ADD COLUMN unit_count INTEGER"],
+      ["unit_label", "ALTER TABLE artifacts ADD COLUMN unit_label TEXT"],
+      ["model_json", "ALTER TABLE artifacts ADD COLUMN model_json TEXT"],
+      ["parent_artifact_id", "ALTER TABLE artifacts ADD COLUMN parent_artifact_id TEXT"],
+    ] as const;
+    for (const [name, statement] of additions) if (!names.has(name)) await db.prepare(statement).run();
+  })().catch((error) => {
     schemaReady = null;
     throw error;
   });
@@ -106,7 +122,7 @@ export async function loadWorkspace(userId: string): Promise<WorkspaceSnapshot> 
     db.prepare("SELECT id, project_id, title, model_key, audience FROM chats WHERE user_id = ? AND archived_at IS NULL ORDER BY updated_at DESC").bind(userId),
     db.prepare("SELECT m.id, m.chat_id, m.role, m.content, m.classification, m.created_at FROM messages m INNER JOIN chats c ON c.id = m.chat_id WHERE c.user_id = ? ORDER BY m.created_at ASC").bind(userId),
     db.prepare("SELECT id, project_id, chat_id, file_name, file_type, size_bytes, extraction_status, extraction_warnings_json, metadata_json FROM sources WHERE user_id = ? ORDER BY created_at ASC").bind(userId),
-    db.prepare("SELECT id, chat_id, message_id, filename, mime_type, size_bytes, version, slide_count FROM artifacts WHERE user_id = ? ORDER BY created_at ASC").bind(userId),
+    db.prepare("SELECT id, chat_id, message_id, filename, mime_type, size_bytes, version, format, unit_count, unit_label, slide_count FROM artifacts WHERE user_id = ? ORDER BY created_at ASC").bind(userId),
   ]);
 
   const rawProjects = projectRows.results as Array<Record<string, unknown>>;
@@ -132,11 +148,12 @@ export async function loadWorkspace(userId: string): Promise<WorkspaceSnapshot> 
         artifact: artifact ? {
           id: String(artifact.id),
           name: String(artifact.filename),
-          format: "pptx" as const,
+          format: String(artifact.format || "pptx") as ArtifactFormat,
           mimeType: String(artifact.mime_type),
           url: `/api/artifacts/${String(artifact.id)}`,
           size: Number(artifact.size_bytes),
-          slideCount: Number(artifact.slide_count ?? 0),
+          unitCount: Number(artifact.unit_count ?? artifact.slide_count ?? 0),
+          unitLabel: String(artifact.unit_label || (artifact.format === "pptx" || !artifact.format ? "slides" : "sections")),
           version: Number(artifact.version),
         } : undefined,
       };
@@ -168,19 +185,31 @@ export async function loadWorkspace(userId: string): Promise<WorkspaceSnapshot> 
   };
 }
 
-export async function loadLatestPresentation(userId: string, chatId: string) {
+export async function loadLatestArtifact(userId: string, chatId: string) {
   await ensureCoreSchema();
   const db = await database();
-  const row = await db.prepare(`SELECT a.presentation_json, a.version
+  const row = await db.prepare(`SELECT a.format, a.version
     FROM artifacts a INNER JOIN chats c ON c.id = a.chat_id
-    WHERE a.chat_id = ? AND a.user_id = ? AND c.user_id = ? AND a.mime_type = ?
-    ORDER BY a.version DESC, a.created_at DESC LIMIT 1
-  `).bind(chatId, userId, userId, "application/vnd.openxmlformats-officedocument.presentationml.presentation").first<{ presentation_json: string | null; version: number }>();
-  if (!row?.presentation_json) return null;
-  return { presentation: JSON.parse(row.presentation_json) as unknown, version: Number(row.version) };
+    WHERE a.chat_id = ? AND a.user_id = ? AND c.user_id = ?
+    ORDER BY a.created_at DESC LIMIT 1
+  `).bind(chatId, userId, userId).first<{ format: ArtifactFormat | null; version: number }>();
+  if (!row) return null;
+  return { format: row.format ?? "pptx", version: Number(row.version) };
 }
 
-export async function savePresentationArtifact(input: {
+export async function loadLatestArtifactModel(userId: string, chatId: string, format: ArtifactFormat) {
+  await ensureCoreSchema();
+  const db = await database();
+  const row = await db.prepare(`SELECT a.id, COALESCE(a.model_json, a.presentation_json) AS model_json, a.version
+    FROM artifacts a INNER JOIN chats c ON c.id = a.chat_id
+    WHERE a.chat_id = ? AND a.user_id = ? AND c.user_id = ? AND a.format = ?
+    ORDER BY a.version DESC, a.created_at DESC LIMIT 1
+  `).bind(chatId, userId, userId, format).first<{ id: string; model_json: string | null; version: number }>();
+  if (!row?.model_json) return null;
+  return { artifactId: row.id, model: JSON.parse(row.model_json) as unknown, version: Number(row.version) };
+}
+
+export async function saveArtifact(input: {
   userId: string;
   chatId: string;
   messageId: string;
@@ -194,9 +223,12 @@ export async function savePresentationArtifact(input: {
   mimeType: string;
   objectKey: string;
   sizeBytes: number;
+  format: ArtifactFormat;
   version: number;
-  slideCount: number;
-  presentation: unknown;
+  unitCount: number;
+  unitLabel: string;
+  model: unknown;
+  parentArtifactId?: string | null;
 }) {
   await ensureCoreSchema();
   const db = await database();
@@ -219,12 +251,15 @@ export async function savePresentationArtifact(input: {
   `).bind(input.messageId, input.chatId, input.message, input.modelKey, now).run();
   await db.prepare(`INSERT INTO artifacts (
     id, user_id, project_id, chat_id, message_id, filename, mime_type, object_key,
-    size_bytes, report_type, version, slide_count, presentation_json, created_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'presentation', ?, ?, ?, ?)
+    size_bytes, report_type, version, format, unit_count, unit_label, model_json,
+    slide_count, presentation_json, parent_artifact_id, created_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     input.artifactId, input.userId, projectId, input.chatId, input.messageId, input.filename,
-    input.mimeType, input.objectKey, input.sizeBytes, input.version, input.slideCount,
-    JSON.stringify(input.presentation), now,
+    input.mimeType, input.objectKey, input.sizeBytes, input.format === "pptx" ? "presentation" : "report", input.version,
+    input.format, input.unitCount, input.unitLabel, JSON.stringify(input.model),
+    input.format === "pptx" ? input.unitCount : null, input.format === "pptx" ? JSON.stringify(input.model) : null,
+    input.parentArtifactId ?? null, now,
   ).run();
 }
 

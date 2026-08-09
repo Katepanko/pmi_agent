@@ -208,6 +208,7 @@ button { color: inherit; }
 .file-glyph.pptx { background: #fff0e9; color: #b45225; border-color: #f0d4c6; }
 .file-glyph.pdf { background: #ffeded; color: #be3e3e; border-color: #efcece; }
 .file-glyph.docx { background: #edf2ff; color: #3d65ad; border-color: #d6e0f6; }
+.file-glyph.html { background: #f2edff; color: #7250a5; border-color: #ddd2f0; }
 .file-glyph.png, .file-glyph.jpg, .file-glyph.jpeg { background: #f3edff; color: #7651ad; border-color: #ded1f0; }
 .message-file > span:nth-child(2), .queued-file > span:nth-child(2) { min-width: 0; flex: 1; display: grid; gap: 3px; }
 .message-file strong, .queued-file strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 10.5px; }

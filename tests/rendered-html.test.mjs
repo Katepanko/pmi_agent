@@ -61,6 +61,32 @@ test("propagates hosted D1 bindings into route handlers without cloudflare proto
   assert.deepEqual(await response.json(), { projects: [], chats: [] });
 });
 
+test("propagates the hosted FILES binding into asynchronous route handlers", async () => {
+  const stored = [];
+  const worker = await loadWorker();
+  const form = new FormData();
+  form.append("fileId", "r2-binding-check");
+  form.append("files", new File(["Status,Owner\nGreen,Integration Lead\n"], "Binding_Check.csv", { type: "text/csv" }));
+
+  const response = await worker.fetch(
+    new Request("http://localhost/api/extract", { method: "POST", body: form }),
+    {
+      ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) },
+      FILES: {
+        async put(key, value, options) {
+          stored.push({ key, size: value.byteLength, options });
+        },
+      },
+    },
+    { waitUntil() {}, passThroughOnException() {} },
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(stored.length, 1);
+  assert.match(stored[0].key, /staged\/local-[^/]+\/r2-binding-check/);
+  assert.equal(stored[0].options.httpMetadata.contentType, "text/csv");
+});
+
 test("exposes configured model display names without leaking secrets", async () => {
   const response = await request("/api/models");
   assert.equal(response.status, 200);

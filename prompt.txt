@@ -1,0 +1,2493 @@
+# Build a Production-Quality PMI Reporting Agent
+
+Act as a senior full-stack engineer, AI architect, M&A / Post-Merger Integration specialist, and product designer.
+
+I want you to build a **PMI Reporting Agent**: a ChatGPT-like application for consultants and Post-Merger Integration teams.
+
+The application must transform heterogeneous PMI project information into comprehensive, professional, consulting-style management reports.
+
+Do not build a simple file summarizer.
+
+Do not build a deterministic dashboard generator.
+
+Do not build a system that extracts only a few fields and ignores the rest of the uploaded information.
+
+The core value proposition is:
+
+> The user uploads fragmented PMI information, asks the agent for a specific management deliverable, and receives a comprehensive, evidence-based consulting report that combines facts, analysis, insights, risks, synergies, recommendations, and management implications.
+
+---
+
+# 1. Core Product Concept
+
+The application should work similarly to ChatGPT.
+
+The primary interface is a conversational chat.
+
+A user can:
+
+* create projects;
+* create multiple chats inside projects;
+* create standalone chats without a project;
+* upload files in any message, including the first message;
+* provide project context;
+* ask questions about uploaded information;
+* request reports;
+* refine previous answers conversationally;
+* ask follow-up questions without uploading the files again;
+* generate professional PowerPoint, Excel, Word, and PDF reports;
+* provide their own report/template files;
+* switch between supported LLMs;
+* retain project-level knowledge and chat-level knowledge.
+
+The AI must behave like a **professional PMI consultant**, not just a document parser.
+
+---
+
+# 2. Supported AI Models
+
+Create a provider-independent model architecture.
+
+The UI should allow the user to select from configured models such as:
+
+### Anthropic
+
+* Sonnet 5
+* Opus 5
+
+### OpenAI
+
+* GPT-5.5
+* GPT-5.6
+* GPT-4 mini
+
+IMPORTANT:
+
+Do not tightly hard-code these display names to API IDs.
+
+Implement a configurable model registry such as:
+
+```python
+MODEL_REGISTRY = {
+    "anthropic-sonnet": {
+        "display_name": "Anthropic Sonnet 5",
+        "provider": "anthropic",
+        "model_id": "...configured..."
+    },
+    "anthropic-opus": {
+        "display_name": "Anthropic Opus 5",
+        "provider": "anthropic",
+        "model_id": "...configured..."
+    },
+    "openai-gpt55": {
+        "display_name": "GPT-5.5",
+        "provider": "openai",
+        "model_id": "...configured..."
+    },
+    "openai-gpt56": {
+        "display_name": "GPT-5.6",
+        "provider": "openai",
+        "model_id": "...configured..."
+    },
+    "openai-mini": {
+        "display_name": "GPT-4 mini",
+        "provider": "openai",
+        "model_id": "...configured..."
+    }
+}
+```
+
+The actual provider model IDs must be configurable through environment variables or application configuration.
+
+Implement a common provider abstraction:
+
+```python
+class LLMProvider:
+    async def generate(...)
+    async def stream(...)
+```
+
+and provider-specific adapters:
+
+```text
+OpenAIProvider
+AnthropicProvider
+```
+
+The rest of the application must not care which provider is selected.
+
+---
+
+# 3. API Key Management
+
+I will provide the API key(s).
+
+Support:
+
+```text
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
+```
+
+Never commit API keys into source code.
+
+Never expose API keys in the frontend.
+
+Never include API keys in logs.
+
+If user-provided keys are supported from the UI, store them securely/encrypted or keep them session-scoped for the prototype.
+
+If the selected model requires a provider key that is unavailable, show a clear message to the user.
+
+---
+
+# 4. Input Formats
+
+The agent must support heterogeneous PMI material.
+
+Support at least:
+
+### Spreadsheets
+
+* .xlsx
+* .xls
+* .csv
+
+### Presentations
+
+* .pptx
+
+### Documents
+
+* .docx
+
+### PDF
+
+* .pdf
+
+### Web / exports
+
+* .html
+* .htm
+
+### Images
+
+* .png
+* .jpg
+* .jpeg
+
+Inputs may include:
+
+* Integration masterplans
+* 100-day plans
+* task trackers
+* milestone trackers
+* synergy trackers
+* risk registers
+* issue logs
+* dependency trackers
+* decision logs
+* budget trackers
+* financial reports
+* ERP exports
+* SAP / ERP extracts
+* KPI dashboards
+* Steering Committee presentations
+* SteerCo summaries
+* IMO / PMO reporting
+* workstream updates
+* weekly reports
+* meeting minutes
+* Teams call transcriptions stored in Word
+* management presentations
+* organization charts
+* screenshots
+* process information
+* go-live checklists
+* Day-1 readiness reports
+* integration plans
+* functional workstream documents
+* user-provided reference reports
+* output templates.
+
+The architecture must make it easy to add more file types later.
+
+---
+
+# 5. Most Important File-Processing Principle
+
+**EVERY uploaded file must be considered.**
+
+This is a critical requirement.
+
+The current generation of the agent must never silently inspect only the easiest files or only the first retrieved chunks.
+
+For every request:
+
+1. identify all files relevant to the current chat/project;
+2. ensure each applicable file has been extracted;
+3. retrieve relevant information from every applicable source;
+4. evaluate whether information in different files is complementary, duplicate, conflicting, outdated, or inconsistent;
+5. synthesize the complete picture;
+6. only then generate the response.
+
+Create an internal **Source Coverage Check**.
+
+Example internal object:
+
+```json
+{
+  "request_id": "...",
+  "sources_considered": [
+    {
+      "file_id": "...",
+      "file_name": "Masterplan.xlsx",
+      "status": "used",
+      "relevant_sections": [...]
+    },
+    {
+      "file_id": "...",
+      "file_name": "Risk Register.xlsx",
+      "status": "used",
+      "relevant_sections": [...]
+    }
+  ],
+  "sources_not_used": [],
+  "coverage_complete": true
+}
+```
+
+Before final synthesis, verify:
+
+```text
+Did I inspect every potentially relevant file?
+
+Did I answer every part of the user's request?
+
+Did I omit material information from the source files?
+
+Are there relevant risks, milestones, synergies, issues, dependencies,
+decisions, financial facts, or workstream developments that should be included?
+```
+
+If relevant information exists, do not omit it merely because the first retrieved chunks were sufficient to produce a plausible answer.
+
+Comprehensiveness is more important than brevity unless the user explicitly requests a shorter answer.
+
+---
+
+# 6. Extraction Architecture
+
+Use deterministic libraries to extract information where possible.
+
+Do NOT ask the LLM to decode the binary files itself when a proper parser exists.
+
+Suggested modules:
+
+```text
+app/
+  ingestion/
+    excel.py
+    powerpoint.py
+    word.py
+    pdf.py
+    html.py
+    images.py
+    csv.py
+    pipeline.py
+```
+
+For each file create:
+
+```python
+ExtractedDocument:
+    file_id
+    file_name
+    file_type
+    metadata
+    raw_text
+    structured_elements
+    tables
+    sheets
+    slides
+    pages
+    images
+    extraction_warnings
+```
+
+Maintain source locations.
+
+Examples:
+
+```text
+Masterplan.xlsx → Sheet "Finance", row 38
+SteerCo.pptx → Slide 12
+Risk_Register.xlsx → Sheet "Risks", row 17
+Minutes.docx → paragraph 43
+Finance_Update.pdf → page 7
+```
+
+This provenance information must survive into the knowledge base.
+
+---
+
+# 7. Excel Processing
+
+Do not flatten every Excel workbook into a single text blob.
+
+Extract:
+
+* workbook name
+* sheet names
+* tables
+* formulas
+* displayed values
+* row/column relationships
+* merged cells where important
+* dates
+* numeric values
+* formatting/status information where meaningful
+* hidden sheets if useful
+* comments/notes where accessible.
+
+Preserve semantic relationships.
+
+For example:
+
+```text
+Milestone | Owner | Due Date | Status
+```
+
+must remain a structured record.
+
+Do not let the LLM confuse adjacent rows or columns.
+
+---
+
+# 8. PowerPoint Processing
+
+Extract:
+
+* slide number
+* slide title
+* text boxes
+* tables
+* charts and chart data where possible
+* speaker notes where possible
+* shapes/status labels
+* meaningful visual context.
+
+Preserve slide-level provenance.
+
+If slides contain screenshots or visual dashboards, use image understanding where appropriate.
+
+---
+
+# 9. Word / Teams Transcript Processing
+
+Word documents may contain:
+
+* reports;
+* meeting minutes;
+* Teams transcriptions;
+* executive updates;
+* decisions;
+* comments;
+* action items.
+
+For transcripts identify, where possible:
+
+```text
+speaker
+timestamp
+statement
+decision
+action
+owner
+deadline
+risk
+issue
+dependency
+question
+```
+
+Do not treat a transcript as equally authoritative as an approved masterplan when reporting formal figures unless the user says otherwise.
+
+But do not ignore information merely because it came from a transcript.
+
+---
+
+# 10. Image Processing
+
+Images may contain:
+
+* risk dashboards;
+* screenshots;
+* charts;
+* project plans;
+* tables;
+* slides;
+* KPI dashboards.
+
+Use multimodal model capabilities and/or appropriate image extraction.
+
+Preserve that the information came from an image and may have lower confidence than structured source data.
+
+---
+
+# 11. Knowledge Architecture
+
+The application has **two knowledge scopes**.
+
+## A. Project-centric knowledge
+
+A project may contain:
+
+* project name;
+* project description;
+* merging companies;
+* deal rationale;
+* integration strategy;
+* Day 1 date;
+* integration objectives;
+* management context;
+* governance;
+* terminology;
+* workstreams;
+* target synergies;
+* reporting expectations;
+* project files;
+* information from previous project chats;
+* user corrections;
+* confirmed source-priority decisions.
+
+Example:
+
+```text
+Project: Alpha / Beta Integration
+
+Alpha acquired Beta.
+
+Day 1: 1 October 2026
+
+Integration approach:
+Partial integration
+
+Key priorities:
+- Finance integration
+- IT migration
+- HR harmonization
+- €40m cost synergies
+
+Reporting cadence:
+Weekly IMO
+Monthly SteerCo
+```
+
+Every new project chat must automatically inherit relevant project context.
+
+Do not require the user to repeat it.
+
+## B. Session / chat-centric knowledge
+
+Each chat retains:
+
+* all messages;
+* all uploaded files;
+* extracted information;
+* corrections;
+* decisions;
+* previous report drafts;
+* previous output format;
+* selected model;
+* audience;
+* user instructions.
+
+Example follow-up:
+
+```text
+User:
+Make this shorter and more focused on risks.
+```
+
+The system must understand that "this" refers to the previous report.
+
+Example:
+
+```text
+User:
+Use the Excel tracker as the authoritative source for all figures.
+```
+
+Persist this correction/priority inside the chat knowledge.
+
+---
+
+# 12. No Cross-Project Leakage
+
+Project A information must never appear in Project B.
+
+Standalone chats must not automatically inherit information from projects.
+
+Project knowledge must have explicit project IDs.
+
+Every stored knowledge item should include provenance:
+
+```text
+project_id
+chat_id
+source_type
+source_id
+created_at
+updated_at
+confidence
+```
+
+---
+
+# 13. Persistent Knowledge Base
+
+After every relevant user message or file upload:
+
+1. extract information;
+2. update chat knowledge;
+3. update project knowledge when applicable;
+4. preserve previous confirmed information;
+5. record user corrections;
+6. maintain source provenance.
+
+Do not regenerate the entire knowledge base blindly each time.
+
+Use versioning.
+
+Example:
+
+```text
+knowledge/
+  project/
+    project_id/
+      v1.json
+      v2.json
+      HEAD
+
+  chats/
+    chat_id/
+      v1.json
+      v2.json
+      HEAD
+```
+
+Database-backed implementation is also acceptable and preferred for production.
+
+---
+
+# 14. The Agent Must Understand PMI
+
+The model system prompt must establish a strong PMI role.
+
+Example behavioral foundation:
+
+```text
+You are a senior Post-Merger Integration consultant supporting
+Integration Management Offices, functional workstreams, CFOs,
+CEOs, Steering Committees, Boards, and PMI leadership teams.
+
+You synthesize fragmented PMI evidence into decision-ready management
+reporting.
+
+You understand integration governance, Day 1 readiness, integration
+masterplans, workstreams, milestones, risks, issues, dependencies,
+financial performance, synergy realization, change management,
+integration execution, target operating models, and management
+decision-making.
+```
+
+---
+
+# 15. PMI Information Model
+
+Do not make the final answer rigidly dependent on a schema.
+
+However, internally normalize important entities where useful.
+
+Suggested entities:
+
+```text
+Project
+Workstream
+Task
+Milestone
+Risk
+Issue
+Dependency
+Decision
+Action
+KPI
+BudgetItem
+Synergy
+Benefit
+Cost
+Owner
+Meeting
+StatusUpdate
+GoLiveItem
+Day1Item
+Recommendation
+Insight
+Conflict
+DataQualityIssue
+Source
+```
+
+The schema supports reasoning.
+
+It must NOT force every report into fixed predefined cards or sections.
+
+---
+
+# 16. Dynamic Reporting — Not Fixed Reports
+
+Do not make reporting overly deterministic.
+
+The user should be able to ask almost anything.
+
+Examples:
+
+```text
+Create an Executive Report for the Board on integration status.
+```
+
+```text
+Generate a SteerCo presentation showing overall PMI progress
+and critical decisions.
+```
+
+```text
+Create a Board-ready summary of integration status,
+top risks, and financial impact.
+```
+
+```text
+Show the CEO the integration status, major milestones achieved,
+and upcoming decisions.
+```
+
+```text
+Generate an Executive summary with key KPIs,
+synergy progress, and risk mitigation status.
+```
+
+```text
+Create a decision brief for the Board on critical
+go-live risks and mitigation.
+```
+
+```text
+Generate a PowerPoint showing integration progress,
+budget variance, and synergy realization.
+```
+
+```text
+Create a weekly status report showing completed tasks,
+overdue items, and next week's priorities.
+```
+
+The LLM should decide the best storyline, sections, analyses, charts, and level of detail from:
+
+* the user's instruction;
+* audience;
+* available evidence;
+* project context;
+* requested format;
+* template.
+
+Do not require the user to select from a predefined report catalogue.
+
+---
+
+# 17. User-Specified Structure Must Be Respected
+
+Users may explicitly specify the required output.
+
+Example:
+
+```text
+Create an Excel milestone table with:
+
+Nr.
+Milestone Name
+Date
+Status
+```
+
+Then create exactly that structure.
+
+If the user specifies:
+
+```text
+Only show red and amber items.
+```
+
+Apply the filter.
+
+If they request:
+
+```text
+Break finance numbers down by cost category.
+```
+
+Perform that analysis using available evidence.
+
+---
+
+# 18. Conversation and Follow-Ups
+
+Follow-ups are a critical capability.
+
+These should work naturally:
+
+```text
+What conflicts exist in the data I uploaded?
+```
+
+```text
+Use the Excel tracker as the authoritative source for all figures.
+```
+
+```text
+Make this shorter and more focused on risks.
+```
+
+```text
+Generate the same report in Excel format instead.
+```
+
+```text
+Can you break down the finance numbers by cost category?
+```
+
+```text
+Show me only red and amber items, not green.
+```
+
+The agent must understand references to:
+
+```text
+this
+that report
+the previous version
+same report
+these figures
+those risks
+the finance numbers
+```
+
+Never require the user to repeat previously available files or context.
+
+---
+
+# 19. Source Conflicts
+
+The system must detect contradictions.
+
+Example:
+
+```text
+Masterplan.xlsx:
+Overall progress = 82%
+
+SteerCo.pptx:
+Overall progress = 75%
+```
+
+Do NOT silently choose one.
+
+Represent internally:
+
+```json
+{
+  "metric": "Overall integration progress",
+  "values": [
+    {
+      "value": "82%",
+      "source": "Masterplan.xlsx"
+    },
+    {
+      "value": "75%",
+      "source": "SteerCo.pptx"
+    }
+  ],
+  "status": "conflict"
+}
+```
+
+Then the agent may say:
+
+```text
+A material inconsistency exists in reported integration progress:
+the masterplan reports 82%, while the latest SteerCo deck reports 75%.
+```
+
+The agent can explain the potential management implication.
+
+But do not invent which number is correct.
+
+---
+
+# 20. User Source-Priority Instructions
+
+If the user says:
+
+```text
+Use the Excel tracker as authoritative.
+```
+
+record this rule and apply it later.
+
+Example:
+
+```json
+{
+  "scope": "chat",
+  "rule_type": "source_authority",
+  "source": "Masterplan.xlsx",
+  "applies_to": "figures"
+}
+```
+
+User instructions override default source heuristics.
+
+---
+
+# 21. Separate Facts From AI Analysis
+
+This is extremely important.
+
+The output may contain four distinct kinds of content:
+
+### 1. Source Facts
+
+Directly supported by uploaded information.
+
+Example:
+
+```text
+The Finance workstream has 7 overdue milestones.
+```
+
+### 2. Derived Calculations
+
+Calculated from source facts.
+
+Example:
+
+```text
+€12m of €20m planned cost synergies have been realized,
+corresponding to 60%.
+```
+
+The calculation must be reproducible.
+
+### 3. AI-Generated Insights
+
+Interpretation based on evidence.
+
+Example:
+
+```text
+AI-generated insight:
+The concentration of overdue milestones in IT and Finance suggests
+that cross-functional dependencies may be becoming the principal
+constraint on integration progress.
+```
+
+### 4. AI-Generated Recommendations
+
+Example:
+
+```text
+AI-generated recommendation — validation required:
+Establish a joint IT–Finance dependency review before the next
+SteerCo to address the three milestones currently blocking both
+workstreams.
+```
+
+AI-generated insights and recommendations MUST be clearly identifiable.
+
+Never present them as facts.
+
+---
+
+# 22. Evidence for Insights and Recommendations
+
+Recommendations must include their evidence.
+
+Internally represent:
+
+```json
+{
+  "recommendation": "Escalate the ERP dependency to SteerCo.",
+  "classification": "ai_generated_recommendation",
+  "confidence": "medium",
+  "evidence": [
+    "ERP migration milestone is 21 days overdue",
+    "Finance close depends on ERP migration",
+    "Owner field has been empty for two consecutive updates"
+  ],
+  "sources": [
+    "Masterplan.xlsx / IT / row 42",
+    "Finance_Update.docx / paragraph 18"
+  ],
+  "requires_validation": true
+}
+```
+
+This gives the user proof for the recommendation.
+
+---
+
+# 23. Consulting-Level Analysis
+
+The system should not stop at:
+
+```text
+Risk = Red
+```
+
+It should explain where supported:
+
+```text
+What happened?
+
+Why does it matter?
+
+What is the likely management implication?
+
+What evidence supports the conclusion?
+
+What action may be appropriate?
+
+Who needs to make the decision?
+
+What is the timing?
+```
+
+Do this especially for:
+
+* major risks;
+* milestones;
+* budget variances;
+* synergies;
+* go-live readiness;
+* interdependencies;
+* unresolved decisions.
+
+---
+
+# 24. Synergy Analysis
+
+Synergies are a core PMI topic.
+
+Support:
+
+```text
+Cost synergies
+Revenue synergies
+One-time integration costs
+Run-rate savings
+Target
+Forecast
+Actual
+Realized
+At risk
+Delayed
+Owner
+Timing
+Initiative
+Workstream
+Dependencies
+```
+
+Where data allows, analyze:
+
+```text
+target vs actual
+forecast vs target
+realization rate
+delayed initiatives
+at-risk value
+largest contributors
+largest shortfalls
+dependency effects
+timing effects
+workstream concentration
+```
+
+Never invent synergy values.
+
+If the source information is insufficient, state the gap.
+
+---
+
+# 25. Management Storylining
+
+Use consulting-style communication and the Minto Pyramid Principle.
+
+Reports should follow:
+
+```text
+Governing thought
+    ↓
+Key message 1
+Key message 2
+Key message 3
+    ↓
+Supporting evidence
+```
+
+Important slides and sections should have **message-driven titles**, not generic labels.
+
+Bad:
+
+```text
+Risk Overview
+```
+
+Better:
+
+```text
+Three unresolved IT dependencies put the planned October go-live at risk
+```
+
+when the evidence supports that conclusion.
+
+Use top-down communication.
+
+Use MECE structures where useful.
+
+Prioritize management implications over raw data dumps.
+
+---
+
+# 26. Audience Adaptation
+
+The output must adapt to the audience.
+
+## Board
+
+Focus on:
+
+* overall integration trajectory;
+* value creation;
+* financial impact;
+* material risks;
+* management decisions;
+* strategic issues.
+
+Avoid unnecessary operational detail.
+
+## CEO
+
+Focus on:
+
+* integration health;
+* major achievements;
+* critical delays;
+* organizational impact;
+* key decisions;
+* value realization.
+
+## Steering Committee
+
+Focus on:
+
+* status;
+* major risks/issues;
+* escalations;
+* milestones;
+* dependencies;
+* decisions required;
+* owners;
+* next steps.
+
+## IMO / PMO
+
+Focus on:
+
+* workstream progress;
+* milestones;
+* overdue activities;
+* dependencies;
+* actions;
+* governance;
+* data quality.
+
+## Finance / CFO
+
+Focus on:
+
+* integration costs;
+* budgets;
+* variances;
+* synergy targets;
+* synergy realization;
+* forecasts;
+* financial risks;
+* cost categories.
+
+## Workstream Teams
+
+Focus on:
+
+* tasks;
+* deadlines;
+* blockers;
+* dependencies;
+* accomplishments;
+* next-week priorities.
+
+Do not force the user to specify an audience if it is already obvious from the request.
+
+---
+
+# 27. Text Preview Before File Generation
+
+This is a mandatory product behavior.
+
+**Do not immediately generate the PPTX, XLSX, DOCX, or PDF.**
+
+First produce the content in the chat.
+
+Example:
+
+```text
+I've prepared the proposed content for the SteerCo presentation.
+
+1. Executive message
+...
+
+2. Integration progress
+...
+
+3. Critical risks
+...
+
+4. Decisions required
+...
+```
+
+The user can then write:
+
+```text
+Make slide 2 shorter.
+```
+
+or:
+
+```text
+Remove the HR section.
+```
+
+or:
+
+```text
+Add synergy progress.
+```
+
+Only after the content is ready should the file renderer create the requested artifact.
+
+The generated file must use the latest approved/revised draft.
+
+---
+
+# 28. Editable Draft Model
+
+Store generated content as a draft.
+
+Example:
+
+```python
+ReportDraft:
+    draft_id
+    project_id
+    chat_id
+    title
+    audience
+    report_type
+    requested_format
+    content
+    sections
+    sources
+    based_on_knowledge_version
+    version
+    created_at
+    updated_at
+```
+
+Every revision produces a new version.
+
+Never overwrite the only copy.
+
+---
+
+# 29. Output Formats
+
+Support:
+
+```text
+.pptx
+.xlsx
+.docx
+.pdf
+```
+
+The same approved draft should be convertible to another format.
+
+Example:
+
+```text
+User:
+Generate the same report in Excel instead.
+```
+
+Do NOT restart the analysis from scratch unless needed.
+
+Use the current report draft as the content source.
+
+---
+
+# 30. User Templates
+
+The user may upload a template.
+
+Examples:
+
+```text
+Deloitte_Master.pptx
+Board_Report_Template.pptx
+Finance_Report.xlsx
+Weekly_Status_Template.docx
+```
+
+The template should influence:
+
+* layout;
+* fonts;
+* color palette;
+* logos;
+* headers;
+* footers;
+* chart styling;
+* page structure;
+* slide masters;
+* spacing;
+* hierarchy;
+* table styling.
+
+Do not merely extract text from the template.
+
+Treat it as a **visual and structural reference**.
+
+The output should look like a professionally authored document based on the template.
+
+---
+
+# 31. PowerPoint Generation
+
+PowerPoint output must look like a consulting presentation.
+
+Do not generate:
+
+* plain white slides;
+* giant paragraphs;
+* one title plus bullets on every slide.
+
+Support:
+
+* message-driven headlines;
+* executive summaries;
+* KPI tiles where appropriate;
+* status tables;
+* timelines;
+* milestone charts;
+* waterfall charts;
+* bar charts;
+* line charts;
+* heatmaps;
+* risk matrices;
+* synergy bridges;
+* workstream overviews;
+* decision pages;
+* dependency diagrams;
+* callout boxes.
+
+Use visualizations only when useful.
+
+Avoid decorative charts.
+
+Charts must communicate a management message.
+
+Prefer editable PowerPoint elements over screenshots.
+
+---
+
+# 32. Excel Generation
+
+Excel reports should be functional management tools, not merely data dumps.
+
+Support:
+
+* styled tables;
+* filters;
+* frozen headers;
+* conditional formatting;
+* formulas where appropriate;
+* charts;
+* summary sheets;
+* detail sheets;
+* source/provenance sheets where useful.
+
+Example:
+
+```text
+Summary
+Milestones
+Risks
+Synergies
+Budget
+Source Notes
+```
+
+But only create sheets relevant to the user request.
+
+If the user asks for a simple four-column milestone table, do not create unnecessary sheets.
+
+---
+
+# 33. Word Generation
+
+Word output should look like a professional consulting report.
+
+Support:
+
+* title page;
+* executive summary;
+* headings;
+* message-oriented subheadings;
+* tables;
+* charts;
+* callouts;
+* page numbers;
+* headers/footers;
+* appendices;
+* source notes.
+
+Use the user's Word template where provided.
+
+---
+
+# 34. PDF Generation
+
+PDF should normally be rendered from the professional report layout rather than generated as plain text.
+
+Ensure:
+
+* correct pagination;
+* charts not clipped;
+* tables not cut off;
+* consistent typography;
+* proper margins;
+* working page breaks.
+
+---
+
+# 35. Source Traceability
+
+Every material fact should be traceable internally to its source.
+
+The user should be able to inspect where a figure originated.
+
+Example:
+
+```text
+€12m realized synergies
+→ Synergy_Tracker.xlsx
+→ Sheet: Summary
+→ Cell: F14
+```
+
+For management-facing reports, avoid cluttering every sentence with citations unless requested.
+
+Instead support:
+
+* footnotes;
+* source appendix;
+* source notes;
+* hover/source inspection in the web UI;
+* optional detailed provenance export.
+
+---
+
+# 36. Data Quality
+
+Detect, but distinguish:
+
+### Missing information
+
+Example:
+
+```text
+5 milestones have no due date.
+```
+
+### Conflict
+
+Example:
+
+```text
+Two sources report different integration progress.
+```
+
+### Risk
+
+Example:
+
+```text
+ERP migration may miss go-live.
+```
+
+### Issue
+
+Example:
+
+```text
+ERP testing has already failed.
+```
+
+### Dependency
+
+Example:
+
+```text
+Finance cutover depends on ERP migration.
+```
+
+Do not mix all of these into a generic "data quality" category.
+
+---
+
+# 37. Missing Information
+
+Never invent missing facts.
+
+Use:
+
+```text
+Not available in provided sources.
+```
+
+or:
+
+```text
+The provided material does not contain sufficient evidence to determine this.
+```
+
+AI-generated recommendations may fill an analytical gap, but they must remain explicitly identified as recommendations.
+
+---
+
+# 38. Avoid Hallucinated Numbers
+
+Never generate plausible management figures.
+
+Do not invent:
+
+* percentages;
+* budgets;
+* synergy values;
+* milestone dates;
+* status counts;
+* owners;
+* deadlines;
+* KPI targets.
+
+If calculations are performed, record:
+
+```text
+inputs
+formula
+result
+sources
+```
+
+---
+
+# 39. Chat UI
+
+Create a clean interface inspired by modern AI chat applications.
+
+Visual style:
+
+```text
+Black
+Green
+White
+```
+
+Professional and minimalist.
+
+Do not imitate ChatGPT branding.
+
+The main interface contains:
+
+```text
+Sidebar
+Chat header
+Conversation
+Message input
+Attachment control
+Model selector
+Project context
+Report/file actions
+```
+
+---
+
+# 40. Sidebar
+
+The sidebar should support:
+
+```text
++ New chat
++ New project
+
+Projects
+    Factory Merge
+        Executive Report
+        Finance Review
+        Weekly IMO
+
+    MedicalCo Integration
+        Day 1 Readiness
+        Synergy Review
+
+Standalone Chats
+    Test Report
+```
+
+Allow:
+
+* collapse/expand sidebar;
+* create project;
+* rename project;
+* delete/archive project;
+* choose simple project icon;
+* create chat;
+* rename chat;
+* archive/delete chat.
+
+---
+
+# 41. Project Context UI
+
+Each project should have editable context.
+
+Example fields:
+
+```text
+Project name
+Project description
+Companies involved
+Deal rationale
+Integration type
+Day 1 date
+Project objectives
+Synergy targets
+Governance
+Important terminology
+Reporting expectations
+Other context
+```
+
+Also allow free-text project instructions.
+
+Do not force the user into filling every field.
+
+---
+
+# 42. Chat UX
+
+The user must be able to attach files and write text in the same first message.
+
+This must work:
+
+```text
+[Attach 4 files]
+
+Create a Board report showing integration status and top risks.
+```
+
+File order must not matter.
+
+Both must be submitted together.
+
+Display uploaded files visibly in the user's chat message using clean file chips/cards.
+
+Do not reduce them to an unclear black attachment icon.
+
+---
+
+# 43. Message Composer
+
+Make the composer behave like a modern AI chat input.
+
+Requirements:
+
+* minimum height;
+* automatic vertical expansion as the user types;
+* maximum height before internal scrolling;
+* user cannot manually shrink it until unreadable;
+* attachment button;
+* send button;
+* stop-generation button while generating;
+* drag-and-drop file upload.
+
+---
+
+# 44. Streaming
+
+Stream model responses token-by-token.
+
+While generating:
+
+```text
+Send button → Stop button
+```
+
+The user must be able to stop generation.
+
+Cancel both:
+
+* frontend stream;
+* backend model request where provider API allows cancellation.
+
+---
+
+# 45. Do Not Use Rigid Result Cards
+
+The main AI output should be **normal structured text in the conversation**.
+
+Use:
+
+* headings;
+* paragraphs;
+* bullets;
+* markdown tables where appropriate.
+
+Do not force every response into hard-coded UI cards such as:
+
+```text
+Risk Card
+Milestone Card
+Synergy Card
+Conflict Card
+```
+
+The LLM should remain free to structure the answer according to the task.
+
+Interactive UI may still be used for:
+
+* files;
+* project management;
+* source inspection;
+* model selector;
+* generated artifact downloads.
+
+But the assistant response itself should behave like a high-quality conversational AI response.
+
+---
+
+# 46. Prompt Architecture
+
+Separate prompts into layers.
+
+Suggested:
+
+```text
+prompts/
+    system_base.md
+    pmi_consultant.md
+    source_grounding.md
+    synthesis.md
+    report_generation.md
+    powerpoint.md
+    excel.md
+    word.md
+    validation.md
+```
+
+Do not build one enormous Python string.
+
+---
+
+# 47. Agent Pipeline
+
+Recommended high-level flow:
+
+```text
+USER MESSAGE
+      ↓
+Resolve project + chat context
+      ↓
+Process new files
+      ↓
+Update knowledge
+      ↓
+Interpret request
+      ↓
+Identify required evidence
+      ↓
+Retrieve across ALL relevant sources
+      ↓
+Coverage check
+      ↓
+Conflict + gap detection
+      ↓
+PMI analysis
+      ↓
+Generate facts + insights + recommendations
+      ↓
+Quality validation
+      ↓
+Stream conversational text response
+      ↓
+Store report draft if applicable
+      ↓
+User revises through chat
+      ↓
+Generate PPTX/XLSX/DOCX/PDF
+```
+
+---
+
+# 48. Request Planning
+
+Before answering complex reporting requests, create an internal plan such as:
+
+```json
+{
+  "audience": "Steering Committee",
+  "objective": "Report integration status and request decisions",
+  "requested_format": "pptx",
+  "required_topics": [
+    "overall progress",
+    "milestones",
+    "risks",
+    "financial status",
+    "synergies",
+    "decisions"
+  ],
+  "required_sources": [...],
+  "analysis_required": [...],
+  "visuals": [...]
+}
+```
+
+This plan is internal.
+
+Do not expose verbose chain-of-thought.
+
+---
+
+# 49. Retrieval Strategy
+
+Do not retrieve only the top 5 chunks and assume the report is complete.
+
+Use hierarchical retrieval.
+
+Example:
+
+```text
+Project corpus
+    ↓
+File-level relevance
+    ↓
+Section / sheet / slide relevance
+    ↓
+Detailed chunks
+```
+
+Maintain a file manifest.
+
+For broad requests like:
+
+```text
+Create an Executive PMI report
+```
+
+run broad coverage across the entire project/chat evidence set.
+
+For narrow questions like:
+
+```text
+Who owns milestone 17?
+```
+
+targeted retrieval is sufficient.
+
+---
+
+# 50. Large Documents
+
+For large source sets:
+
+1. extract each file;
+2. build a structured source index;
+3. create file-level summaries;
+4. retain detailed chunks;
+5. perform request-specific retrieval;
+6. run coverage validation.
+
+Never rely only on summaries if exact values are needed.
+
+---
+
+# 51. Report Validation Agent / Step
+
+Before showing the final report text, run a validation pass.
+
+Check:
+
+```text
+1. Did we answer every requested question?
+
+2. Did we consider every relevant file?
+
+3. Are all factual values supported?
+
+4. Are calculations reproducible?
+
+5. Have conflicting figures been disclosed?
+
+6. Are important source gaps disclosed?
+
+7. Are AI insights clearly distinguished from facts?
+
+8. Are recommendations evidence-based?
+
+9. Is the response appropriate for the requested audience?
+
+10. Is there material PMI information that has been omitted?
+
+11. Is the storyline concise and management-oriented?
+
+12. Did we preserve user corrections and source-priority instructions?
+```
+
+If validation fails, fix the draft before returning it.
+
+---
+
+# 52. Example Scenario 1
+
+Input:
+
+```text
+Create an Executive Report for the Board on integration status.
+
+Files:
+Integration masterplan.xlsx
+Steering Committee update.pptx
+Risk register.xlsx
+KPI summary.xlsx
+```
+
+Expected behavior:
+
+```text
+1. Extract all four files.
+2. Understand project context.
+3. Identify important milestones, progress, risks, KPIs,
+   financial/value implications and decisions.
+4. Identify conflicting information.
+5. Generate a Board-level storyline.
+6. Include major insights.
+7. Clearly mark AI recommendations.
+8. Provide the report content first in chat.
+9. Generate the requested artifact after content refinement.
+```
+
+---
+
+# 53. Example Scenario 2
+
+Input:
+
+```text
+Generate a SteerCo presentation showing overall PMI progress
+and critical decisions.
+
+Files:
+Masterplan.xlsx
+Risk dashboard.png
+Budget status.xlsx
+```
+
+The report should likely contain:
+
+```text
+Executive message
+Overall progress
+Major achievements
+Critical milestones
+Red/amber risks
+Budget position
+Decisions required
+Next steps
+```
+
+But do NOT use this as a fixed template.
+
+Adapt it based on the actual source material.
+
+---
+
+# 54. Example Scenario 3
+
+Input:
+
+```text
+Create a weekly team report with this week's wins,
+blockers, and next week's focus.
+
+Files:
+Task tracker.xlsx
+Issue log.xlsx
+Weekly notes.docx
+```
+
+Do not produce Board-level strategic content.
+
+Produce a practical operational update.
+
+---
+
+# 55. Example Follow-Up Flow
+
+Turn 1:
+
+```text
+Create a Finance integration report.
+```
+
+Agent creates report.
+
+Turn 2:
+
+```text
+What conflicts exist in the data?
+```
+
+Agent analyzes previously loaded information.
+
+Turn 3:
+
+```text
+Use the Excel tracker as authoritative for all financial figures.
+```
+
+Agent records correction.
+
+Turn 4:
+
+```text
+Make the report shorter and focus on risks.
+```
+
+Agent revises existing draft.
+
+Turn 5:
+
+```text
+Generate it as PowerPoint.
+```
+
+Agent generates the current revised draft as PPTX.
+
+At no point should the user need to re-upload the original files.
+
+---
+
+# 56. Recommended Backend
+
+If an existing repository already exists:
+
+**Inspect the repository first and preserve the existing architecture where reasonable.**
+
+Do not unnecessarily rewrite working functionality.
+
+For a greenfield implementation, a suitable architecture is:
+
+```text
+Backend:
+Python
+FastAPI
+Pydantic
+SQLAlchemy
+
+Database:
+PostgreSQL
+SQLite acceptable for local prototype
+
+LLM:
+OpenAI SDK
+Anthropic SDK
+
+Extraction:
+openpyxl
+pandas
+python-pptx
+python-docx
+PyMuPDF
+BeautifulSoup
+Pillow
+
+Reports:
+python-pptx or another template-capable PPTX library
+openpyxl / XlsxWriter
+python-docx
+headless LibreOffice or equivalent for PDF conversion
+
+Frontend:
+React
+TypeScript preferred
+Vite
+```
+
+Choose additional dependencies only where justified.
+
+---
+
+# 57. Recommended Backend Domains
+
+Organize the backend around business capabilities.
+
+Example:
+
+```text
+app/
+    api/
+    auth/
+    projects/
+    chats/
+    messages/
+    uploads/
+    ingestion/
+    knowledge/
+    retrieval/
+    llm/
+    prompts/
+    analysis/
+    reports/
+    drafts/
+    provenance/
+    templates/
+    export/
+    database/
+```
+
+Avoid one giant `main.py`.
+
+---
+
+# 58. API Concepts
+
+Example routes:
+
+```text
+POST   /api/projects
+GET    /api/projects
+GET    /api/projects/{id}
+PATCH  /api/projects/{id}
+DELETE /api/projects/{id}
+
+POST   /api/projects/{id}/chats
+GET    /api/chats/{id}
+PATCH  /api/chats/{id}
+
+POST   /api/chats/{id}/messages
+POST   /api/chats/{id}/uploads
+
+GET    /api/chats/{id}/knowledge
+
+GET    /api/reports/{id}
+PATCH  /api/reports/{id}
+POST   /api/reports/{id}/generate
+
+GET    /api/models
+GET    /api/settings
+```
+
+Use streaming endpoints for assistant generation.
+
+---
+
+# 59. Security
+
+Because PMI information may be highly confidential:
+
+* validate uploads;
+* enforce file size limits;
+* sanitize filenames;
+* protect against path traversal;
+* separate tenant/project data;
+* never put secrets into prompts;
+* never log API keys;
+* make data deletion possible;
+* avoid sending files to providers unnecessarily;
+* only send relevant extracted information to the selected LLM provider;
+* maintain clear data boundaries.
+
+Design the architecture so enterprise security can later be added.
+
+---
+
+# 60. Logging and Observability
+
+Log operational metadata such as:
+
+```text
+request ID
+project ID
+chat ID
+selected provider/model
+files considered
+retrieval count
+token usage
+latency
+export status
+errors
+```
+
+Do NOT log secrets.
+
+For debugging, make it possible to inspect:
+
+```text
+Why was this source retrieved?
+Which files were considered?
+Which evidence supports this output?
+Which model created the answer?
+```
+
+---
+
+# 61. Cost Tracking
+
+Capture:
+
+```text
+provider
+model
+input tokens
+output tokens
+estimated cost
+request type
+project
+chat
+```
+
+Provide this as an internal capability.
+
+It does not need to dominate the user interface.
+
+---
+
+# 62. Quality Over Token Minimization
+
+Do not aggressively minimize context at the cost of report quality.
+
+For executive PMI reports, completeness is essential.
+
+Use:
+
+* hierarchical summaries;
+* caching;
+* retrieval;
+* source indexing;
+* structured extraction;
+
+to control token usage.
+
+Do not solve token cost by ignoring files.
+
+---
+
+# 63. Tests
+
+Create tests for at least:
+
+### Upload
+
+* files + first user prompt work together;
+* text first then attachment works;
+* attachment first then text works;
+* multiple files work.
+
+### Knowledge
+
+* second chat message remembers first;
+* new chat inside same project receives project context;
+* standalone chat does not receive project context;
+* Project A does not leak into Project B.
+
+### Source processing
+
+* Excel values retain row/column provenance;
+* PowerPoint retains slide provenance;
+* Word retains paragraph/document provenance;
+* PDF retains page provenance.
+
+### Conflicts
+
+* conflicting values are surfaced.
+
+### User correction
+
+* source priority persists.
+
+### Follow-up
+
+* "make this shorter" revises previous report.
+
+### Completeness
+
+Given four relevant uploaded files, the generated analysis must demonstrate that all four were considered.
+
+### Hallucination
+
+Unsupported numeric values should fail validation.
+
+### Export
+
+* PPTX opens successfully;
+* XLSX opens successfully;
+* DOCX opens successfully;
+* PDF opens successfully.
+
+---
+
+# 64. Acceptance Test — Comprehensive PMI Report
+
+Given:
+
+```text
+Masterplan.xlsx
+Risk Register.xlsx
+Budget Tracker.xlsx
+Synergy Tracker.xlsx
+Weekly Update.docx
+SteerCo.pptx
+```
+
+and:
+
+```text
+Create an executive integration report covering overall status,
+milestones, top risks, budget, synergies and decisions required.
+```
+
+the system passes only if:
+
+```text
+✓ all six files are inspected;
+✓ all requested areas are addressed;
+✓ relevant conflicts are reported;
+✓ relevant gaps are reported;
+✓ numbers have provenance;
+✓ no numbers are invented;
+✓ important information is not silently omitted;
+✓ the executive storyline is synthesized rather than copied;
+✓ AI insights are evidence-based;
+✓ AI recommendations are clearly labelled;
+✓ management implications are provided;
+✓ the result is shown as text first;
+✓ a professional file can subsequently be generated.
+```
+
+---
+
+# 65. Acceptance Test — Template Quality
+
+Given:
+
+```text
+Deloitte_Master.pptx
+```
+
+plus project data and:
+
+```text
+Create a SteerCo PowerPoint.
+```
+
+the result must:
+
+```text
+✓ use the template's visual language;
+✓ use professional layouts;
+✓ preserve fonts/colors where possible;
+✓ use message-driven headlines;
+✓ contain useful charts where supported;
+✓ avoid generic white slides;
+✓ avoid text overflow;
+✓ avoid overlapping elements;
+✓ avoid clipped charts;
+✓ remain editable;
+✓ look like a professional consulting deliverable.
+```
+
+---
+
+# 66. Definition of Done
+
+The application is NOT complete merely because:
+
+```text
+files upload
++
+LLM returns text
++
+PowerPoint file can technically be downloaded.
+```
+
+It is complete when it behaves like a useful PMI consulting agent:
+
+```text
+Heterogeneous PMI sources
+        ↓
+Comprehensive understanding
+        ↓
+Persistent project + chat knowledge
+        ↓
+Evidence reconciliation
+        ↓
+PMI reasoning
+        ↓
+Management insight
+        ↓
+Evidence-backed recommendations
+        ↓
+Conversational refinement
+        ↓
+Professional consulting deliverable
+```
+
+---
+
+# 67. Implementation Approach for Codex
+
+Before changing code:
+
+1. inspect the full repository;
+2. document the existing architecture;
+3. identify which capabilities already exist;
+4. identify gaps against this specification;
+5. preserve working components;
+6. create a staged implementation plan;
+7. then implement.
+
+Do not simply generate a completely new app if a working codebase already exists.
+
+Prioritize the implementation in this order:
+
+### Phase 1 — Conversational core
+
+* projects;
+* chats;
+* model selection;
+* uploads;
+* streaming;
+* stop generation;
+* project/chat persistence.
+
+### Phase 2 — Reliable ingestion
+
+* all supported formats;
+* provenance;
+* source indexing;
+* extraction validation.
+
+### Phase 3 — Knowledge and retrieval
+
+* project knowledge;
+* chat knowledge;
+* corrections;
+* hierarchical retrieval;
+* source coverage validation.
+
+### Phase 4 — PMI consultant reasoning
+
+* comprehensive synthesis;
+* conflicts;
+* risks;
+* issues;
+* synergies;
+* recommendations;
+* evidence.
+
+### Phase 5 — Editable report drafts
+
+* draft versioning;
+* conversational revision;
+* text preview.
+
+### Phase 6 — Professional exports
+
+* PowerPoint;
+* Excel;
+* Word;
+* PDF;
+* user template support.
+
+### Phase 7 — Quality hardening
+
+* automated tests;
+* hallucination checks;
+* provenance checks;
+* export QA;
+* security;
+* performance.
+
+After each phase:
+
+* run the tests;
+* fix failures;
+* report exactly what was implemented;
+* identify remaining gaps.
+
+---
+
+# 68. Most Important Behavioral Rule
+
+Whenever there is a choice between:
+
+```text
+A. producing a short plausible answer quickly
+```
+
+and:
+
+```text
+B. carefully reviewing the available PMI information,
+   synthesizing it comprehensively, identifying conflicts,
+   drawing supported insights, and producing a management-ready answer
+```
+
+choose **B**.
+
+The product exists because PMI teams already have fragmented information.
+
+The agent's job is to turn that fragmentation into a complete, traceable, decision-ready management view.
+
+Build the system accordingly.

@@ -1,6 +1,7 @@
 "use client";
 
 import { DragEvent, FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
+import { createReportArtifact, type ReportFormat } from "./lib/report-export";
 
 type ModelOption = {
   key: string;
@@ -27,6 +28,7 @@ type Message = {
   createdAt: string;
   attachments?: Attachment[];
   variant?: "demo-report" | "error";
+  artifact?: { name: string; format: ReportFormat; url: string };
 };
 
 type Chat = {
@@ -128,6 +130,17 @@ function fileGlyph(type: string) {
   return "FL";
 }
 
+function requestedFormat(value: string): ReportFormat | null {
+  const text = value.toLowerCase();
+  if (!/\b(generate|create|export|download|make)\b/.test(text)) return null;
+  if (/powerpoint|pptx|slide deck/.test(text)) return "pptx";
+  if (/excel|xlsx|spreadsheet/.test(text)) return "xlsx";
+  if (/word|docx|document/.test(text)) return "docx";
+  if (/pdf/.test(text)) return "pdf";
+  if (/html|dashboard/.test(text)) return "html";
+  return null;
+}
+
 export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }) {
   const [projects, setProjects] = useState(initialProjects);
   const [chats, setChats] = useState(initialChats);
@@ -140,6 +153,7 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
   const [isDragging, setIsDragging] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [workspaceDirty, setWorkspaceDirty] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [selectedModel, setSelectedModel] = useState(initialModels.find((model) => model.key === "openai-gpt56")?.key ?? initialModels[0]?.key ?? "openai-gpt56");
   const abortRef = useRef<AbortController | null>(null);
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -189,6 +203,34 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
     setChats((current) => current.map((chat) => (chat.id === activeChatId ? updater(chat) : chat)));
   };
 
+  const downloadReport = (format: ReportFormat, content?: string, addMessage = true) => {
+    const draft = content ?? [...activeChat.messages].reverse().find((message) => message.role === "assistant" && message.variant !== "error" && message.content.trim())?.content;
+    if (!draft) return false;
+    const { blob, fileName } = createReportArtifact(format, {
+      title: activeChat.title,
+      audience: activeChat.audience,
+      content: draft,
+      sources: activeChat.sources.map((source) => ({ name: source.name, status: source.status })),
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    if (addMessage) {
+      updateActiveChat((chat) => ({ ...chat, messages: [...chat.messages, {
+        id: uid("message"), role: "assistant", createdAt: "Now",
+        content: `Your ${format.toUpperCase()} file is ready.`,
+        artifact: { name: fileName, format, url },
+      }] }));
+      scrollToBottom();
+    }
+    setExportOpen(false);
+    return true;
+  };
+
   const addFiles = async (files: File[]) => {
     const supported = ["xlsx", "xls", "csv", "pptx", "docx", "pdf", "html", "htm", "png", "jpg", "jpeg"];
     const additions = await Promise.all(
@@ -210,27 +252,29 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
 
     const accepted = files.filter((file) => supported.includes(file.name.split(".").pop()?.toLowerCase() || ""));
     if (!accepted.length) return;
-    try {
-      const form = new FormData();
-      accepted.forEach((file) => form.append("files", file));
-      const response = await fetch("/api/extract", { method: "POST", body: form });
-      const payload = (await response.json()) as {
-        documents?: Array<{ fileName: string; status: Attachment["status"]; rawText: string; extractionWarnings: string[] }>;
-        error?: string;
-      };
-      if (!response.ok || !payload.documents) throw new Error(payload.error ?? "Extraction failed.");
-      const documents = [...payload.documents];
-      setQueuedFiles((current) => current.map((queued) => {
-        const matchIndex = documents.findIndex((document) => document.fileName === queued.name);
-        if (matchIndex < 0) return queued;
-        const [document] = documents.splice(matchIndex, 1);
-        return { ...queued, status: document.status, excerpt: document.rawText.slice(0, 4_000), warnings: document.extractionWarnings };
-      }));
-    } catch (error) {
-      const warning = error instanceof Error ? error.message : "Extraction failed.";
-      const names = new Set(accepted.map((file) => file.name));
-      setQueuedFiles((current) => current.map((queued) => names.has(queued.name) ? { ...queued, status: "failed", warnings: [warning] } : queued));
-    }
+    await Promise.all(accepted.map(async (file, index) => {
+      const attachment = additions[files.indexOf(file)] ?? additions[index];
+      try {
+        const form = new FormData();
+        form.append("files", file);
+        form.append("fileId", attachment.id);
+        const response = await fetch("/api/extract", { method: "POST", body: form });
+        const payload = (await response.json()) as {
+          documents?: Array<{ fileId: string; status: Attachment["status"]; rawText: string; extractionWarnings: string[] }>;
+          error?: string;
+        };
+        const document = payload.documents?.[0];
+        if (!response.ok || !document) throw new Error(payload.error ?? "Extraction service unavailable.");
+        setQueuedFiles((current) => current.map((queued) => queued.id === attachment.id
+          ? { ...queued, status: document.status, excerpt: document.rawText.slice(0, 4_000), warnings: document.extractionWarnings }
+          : queued));
+      } catch (error) {
+        const warning = error instanceof Error ? error.message : "Extraction service unavailable.";
+        setQueuedFiles((current) => current.map((queued) => queued.id === attachment.id
+          ? { ...queued, status: "pending", warnings: [`${warning} Retry this source without re-uploading the other files.`] }
+          : queued));
+      }
+    }));
   };
 
   const handleDrop = (event: DragEvent<HTMLDivElement>) => {
@@ -275,6 +319,16 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
     const assistantId = uid("message");
     const combinedSources = [...activeChat.sources, ...queuedFiles];
     const history = activeChat.messages.map(({ role, content }) => ({ role, content }));
+    const format = requestedFormat(userMessage.content);
+    const latestDraft = [...activeChat.messages].reverse().find((message) => message.role === "assistant" && message.variant !== "error" && message.content.trim())?.content;
+
+    if (format && latestDraft && queuedFiles.length === 0) {
+      updateActiveChat((chat) => ({ ...chat, messages: [...chat.messages, userMessage] }));
+      setComposer("");
+      if (textAreaRef.current) textAreaRef.current.style.height = "56px";
+      window.setTimeout(() => downloadReport(format, latestDraft), 0);
+      return;
+    }
 
     updateActiveChat((chat) => ({
       ...chat,
@@ -384,6 +438,52 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
     setContextOpen(true);
   };
 
+  const renameChat = (chat: Chat) => {
+    const title = window.prompt("Rename chat", chat.title)?.trim();
+    if (!title || title === chat.title) return;
+    setChats((current) => current.map((item) => item.id === chat.id ? { ...item, title } : item));
+    setWorkspaceDirty(true);
+  };
+
+  const deleteChat = (chat: Chat) => {
+    if (!window.confirm(`Delete “${chat.title}”? This removes its messages and sources.`)) return;
+    const remaining = chats.filter((item) => item.id !== chat.id);
+    if (remaining.length === 0) {
+      const replacement: Chat = { id: uid("chat"), title: "New conversation", audience: "Infer from request", projectId: null, messages: [], sources: [] };
+      setChats([replacement]);
+      setActiveChatId(replacement.id);
+    } else {
+      setChats(remaining);
+      if (activeChatId === chat.id) setActiveChatId(remaining[0].id);
+    }
+    setProjects((current) => current.map((project) => ({ ...project, chats: project.chats.filter((id) => id !== chat.id) })));
+    setWorkspaceDirty(true);
+  };
+
+  const renameProject = (project: Project) => {
+    const name = window.prompt("Rename project", project.name)?.trim();
+    if (!name || name === project.name) return;
+    const monogram = name.split(/\s+/).slice(0, 2).map((word) => word[0]).join("").toUpperCase();
+    setProjects((current) => current.map((item) => item.id === project.id ? { ...item, name, monogram: monogram || "PM" } : item));
+    setWorkspaceDirty(true);
+  };
+
+  const deleteProject = (project: Project) => {
+    if (!window.confirm(`Delete “${project.name}” and all of its chats?`)) return;
+    const removed = new Set(project.chats);
+    const remaining = chats.filter((chat) => !removed.has(chat.id));
+    if (remaining.length === 0) {
+      const replacement: Chat = { id: uid("chat"), title: "New conversation", audience: "Infer from request", projectId: null, messages: [], sources: [] };
+      setChats([replacement]);
+      setActiveChatId(replacement.id);
+    } else {
+      setChats(remaining);
+      if (removed.has(activeChatId)) setActiveChatId(remaining[0].id);
+    }
+    setProjects((current) => current.filter((item) => item.id !== project.id));
+    setWorkspaceDirty(true);
+  };
+
   const toggleProject = (projectId: string) => {
     setProjects((current) => current.map((project) => project.id === projectId ? { ...project, expanded: !project.expanded } : project));
   };
@@ -404,9 +504,9 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
     <div className={`app-shell ${sidebarCollapsed ? "sidebar-is-collapsed" : ""}`}>
       <aside className="sidebar" aria-label="Projects and chats">
         <div className="brand-row">
-          <button className="brand" onClick={() => setSidebarCollapsed(false)} aria-label="Northstar home">
-            <span className="brand-mark">N</span>
-            {!sidebarCollapsed && <span className="brand-name">NORTHSTAR</span>}
+          <button className="brand" onClick={() => setSidebarCollapsed(false)} aria-label="PMI Agent home">
+            <span className="brand-mark">P</span>
+            {!sidebarCollapsed && <span className="brand-name">PMI AGENT</span>}
           </button>
           {!sidebarCollapsed && <button className="icon-button inverse" onClick={() => setSidebarCollapsed(true)} aria-label="Collapse sidebar">‹</button>}
         </div>
@@ -433,6 +533,8 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
                       <span className="chevron">{project.expanded ? "⌄" : "›"}</span>
                     </button>
                     <button className="project-add" onClick={() => createChat(project.id)} aria-label={`New chat in ${project.name}`}>＋</button>
+                    <button className="sidebar-action" onClick={() => renameProject(project)} aria-label={`Rename ${project.name}`}>✎</button>
+                    <button className="sidebar-action danger" onClick={() => deleteProject(project)} aria-label={`Delete ${project.name}`}>×</button>
                   </div>
                   {project.expanded && (
                     <div className="nested-chats">
@@ -440,10 +542,11 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
                         const chat = chats.find((item) => item.id === chatId);
                         if (!chat) return null;
                         return (
-                          <button key={chat.id} className={`chat-link ${activeChatId === chat.id ? "active" : ""}`} onClick={() => setActiveChatId(chat.id)}>
-                            <span className="chat-rail" />
-                            <span>{chat.title}</span>
-                          </button>
+                          <div key={chat.id} className={`chat-row ${activeChatId === chat.id ? "active" : ""}`}>
+                            <button className="chat-link" onClick={() => setActiveChatId(chat.id)}><span className="chat-rail" /><span>{chat.title}</span></button>
+                            <button className="sidebar-action" onClick={() => renameChat(chat)} aria-label={`Rename ${chat.title}`}>✎</button>
+                            <button className="sidebar-action danger" onClick={() => deleteChat(chat)} aria-label={`Delete ${chat.title}`}>×</button>
+                          </div>
                         );
                       })}
                     </div>
@@ -454,16 +557,18 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
 
             <div className="sidebar-section-label standalone-label">Standalone chats</div>
             {chats.filter((chat) => chat.projectId === null).map((chat) => (
-              <button key={chat.id} className={`standalone-chat chat-link ${activeChatId === chat.id ? "active" : ""}`} onClick={() => setActiveChatId(chat.id)}>
-                <span className="bubble-icon">○</span><span>{chat.title}</span>
-              </button>
+              <div key={chat.id} className={`chat-row standalone-chat ${activeChatId === chat.id ? "active" : ""}`}>
+                <button className="chat-link" onClick={() => setActiveChatId(chat.id)}><span className="bubble-icon">○</span><span>{chat.title}</span></button>
+                <button className="sidebar-action" onClick={() => renameChat(chat)} aria-label={`Rename ${chat.title}`}>✎</button>
+                <button className="sidebar-action danger" onClick={() => deleteChat(chat)} aria-label={`Delete ${chat.title}`}>×</button>
+              </div>
             ))}
           </div>
         )}
 
         <div className="sidebar-footer">
-          <div className="profile-avatar">KP</div>
-          {!sidebarCollapsed && <div><strong>Katja Panko</strong><span>Private workspace</span></div>}
+          <div className="profile-avatar">U</div>
+          {!sidebarCollapsed && <div><strong>User</strong><span>Private workspace</span></div>}
           {!sidebarCollapsed && <button className="footer-more" aria-label="Workspace menu">•••</button>}
         </div>
       </aside>
@@ -490,6 +595,12 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
               <span className="stack-icon">▱</span> Sources <b>{allSourceCount}</b>
             </button>
             {activeProject && <button className={`header-pill context-button ${contextOpen ? "active" : ""}`} onClick={() => setContextOpen((open) => !open)}>Project context</button>}
+            <div className="export-wrap">
+              <button className={`header-pill ${exportOpen ? "active" : ""}`} onClick={() => setExportOpen((open) => !open)}>Export <span>⌄</span></button>
+              {exportOpen && <div className="export-menu">
+                {(["pptx", "pdf", "xlsx", "docx", "html"] as ReportFormat[]).map((format) => <button key={format} onClick={() => downloadReport(format)}>{format === "pptx" ? "PowerPoint" : format === "xlsx" ? "Excel workbook" : format === "docx" ? "Word document" : format === "html" ? "HTML dashboard" : "PDF"}<span>.{format}</span></button>)}
+              </div>}
+            </div>
             <button className="more-button" aria-label="Chat actions">•••</button>
           </div>
         </header>
@@ -591,7 +702,7 @@ function EmptyConversation({ project, onPrompt }: { project: Project | null; onP
   ];
   return (
     <div className="empty-conversation">
-      <div className="empty-mark">N</div>
+      <div className="empty-mark">P</div>
       <span className="eyebrow">PMI reporting agent</span>
       <h2>Turn integration evidence into a management point of view.</h2>
       <p>{project ? `This chat inherits context from ${project.name}. ` : "This is a standalone chat. "}Attach trackers, updates, decks, minutes, or screenshots, then ask for the deliverable you need.</p>
@@ -625,12 +736,13 @@ function MessageView({ message, generating }: { message: Message; generating: bo
 
   return (
     <article className={`message assistant-message ${message.variant === "error" ? "has-error" : ""}`}>
-      <div className="assistant-avatar">N</div>
+      <div className="assistant-avatar">P</div>
       <div className="assistant-body">
-        <div className="assistant-meta"><strong>Northstar</strong><span>PMI consultant</span><time>{message.createdAt}</time></div>
+        <div className="assistant-meta"><strong>PMI Agent</strong><span>PMI consultant</span><time>{message.createdAt}</time></div>
         {message.variant === "demo-report" ? <DemoReport /> : (
           <div className="streamed-content">{message.content}{generating && <span className="typing-cursor" />}</div>
         )}
+        {message.artifact && <a className="artifact-download" href={message.artifact.url} download={message.artifact.name}><span className={`file-glyph ${message.artifact.format}`}>{fileGlyph(message.artifact.format)}</span><span><strong>{message.artifact.name}</strong><small>Download {message.artifact.format.toUpperCase()}</small></span><b>↓</b></a>}
         {!generating && message.content && message.variant !== "error" && (
           <div className="message-actions"><button>Copy</button><button>Useful</button><button>Needs work</button><button>•••</button></div>
         )}

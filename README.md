@@ -1,6 +1,6 @@
-# Northstar — PMI Reporting Agent
+# PMI Agent — Decision-ready integration reporting
 
-Northstar is a conversational Post-Merger Integration reporting workspace. It
+PMI Agent is a conversational Post-Merger Integration reporting workspace. It
 combines project context, heterogeneous source material, source coverage, and
 provider-independent language models to produce evidence-grounded management
 report drafts.

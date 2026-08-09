@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-const title = "Northstar | PMI Reporting Agent";
+const title = "PMI Agent | Decision-ready integration reporting";
 const description = "Turn fragmented post-merger integration evidence into decision-ready management reporting.";
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -24,9 +24,9 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title,
     description,
-    applicationName: "Northstar",
-    icons: { icon: "/favicon.png", shortcut: "/favicon.png" },
-    openGraph: { title, description, type: "website", images: [{ url: imageUrl, width: 1536, height: 1024, alt: "Northstar turns fragmented PMI evidence into a decision-ready management view" }] },
+    applicationName: "PMI Agent",
+    icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
+    openGraph: { title, description, type: "website", images: [{ url: imageUrl, width: 1536, height: 1024, alt: "PMI Agent turns fragmented integration evidence into a decision-ready management view" }] },
     twitter: { card: "summary_large_image", title, description, images: [imageUrl] },
   };
 }

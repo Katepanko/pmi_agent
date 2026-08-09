@@ -291,31 +291,38 @@ function extractPdf(file: File, bytes: Uint8Array) {
   return document;
 }
 
-export async function extractFile(file: File): Promise<ExtractedDocument> {
+export async function extractFile(file: File, requestedFileId?: string): Promise<ExtractedDocument> {
   const type = fileExtension(file.name);
   if (!supported.has(type)) {
     const document = baseDocument(file, type || "unknown");
     document.status = "failed";
     document.extractionWarnings.push(`Unsupported file type: ${type || "unknown"}.`);
+    if (requestedFileId) document.fileId = requestedFileId;
     return document;
   }
 
   try {
-    if (type === "csv") return extractCsv(file, await file.text());
-    if (type === "html" || type === "htm") return extractHtml(file, await file.text());
+    let extracted: ExtractedDocument;
+    if (type === "csv") extracted = extractCsv(file, await file.text());
+    else if (type === "html" || type === "htm") extracted = extractHtml(file, await file.text());
+    else {
     const bytes = new Uint8Array(await file.arrayBuffer());
-    if (type === "docx") return extractDocx(file, bytes);
-    if (type === "pptx") return extractPptx(file, bytes);
-    if (type === "xlsx") return extractXlsx(file, bytes);
-    if (type === "png" || type === "jpg" || type === "jpeg") return extractImage(file, bytes);
-    if (type === "pdf") return extractPdf(file, bytes);
-
-    const document = baseDocument(file, type);
-    document.status = "partial";
-    document.extractionWarnings.push("Legacy .xls requires the server-side spreadsheet compatibility adapter; the source remains pending and cannot be marked covered.");
-    return document;
+      if (type === "docx") extracted = extractDocx(file, bytes);
+      else if (type === "pptx") extracted = extractPptx(file, bytes);
+      else if (type === "xlsx") extracted = extractXlsx(file, bytes);
+      else if (type === "png" || type === "jpg" || type === "jpeg") extracted = extractImage(file, bytes);
+      else if (type === "pdf") extracted = extractPdf(file, bytes);
+      else {
+        extracted = baseDocument(file, type);
+        extracted.status = "partial";
+        extracted.extractionWarnings.push("Legacy .xls requires the server-side spreadsheet compatibility adapter; the source remains pending and cannot be marked covered.");
+      }
+    }
+    if (requestedFileId) extracted.fileId = requestedFileId;
+    return extracted;
   } catch (error) {
     const document = baseDocument(file, type);
+    if (requestedFileId) document.fileId = requestedFileId;
     document.status = "failed";
     document.extractionWarnings.push(error instanceof Error ? error.message : "Extraction failed.");
     return document;

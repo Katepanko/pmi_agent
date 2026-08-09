@@ -172,5 +172,17 @@ export async function syncWorkspace(userId: string, snapshot: WorkspaceSnapshot)
       `).bind(source.id, userId, chat.projectId, chat.id, source.name, source.type, "application/octet-stream", source.size, `staged/${userId}/${source.id}`, source.status, JSON.stringify(source.warnings ?? []), JSON.stringify({ excerpt: source.excerpt }), now, now).run();
     }
   }
+
+  const retainedChatIds = new Set(snapshot.chats.map((chat) => chat.id));
+  const storedChats = await db.prepare("SELECT id FROM chats WHERE user_id = ?").bind(userId).all<{ id: string }>();
+  for (const row of storedChats.results) {
+    if (!retainedChatIds.has(row.id)) await db.prepare("DELETE FROM chats WHERE id = ? AND user_id = ?").bind(row.id, userId).run();
+  }
+
+  const retainedProjectIds = new Set(snapshot.projects.map((project) => project.id));
+  const storedProjects = await db.prepare("SELECT id FROM projects WHERE user_id = ?").bind(userId).all<{ id: string }>();
+  for (const row of storedProjects.results) {
+    if (!retainedProjectIds.has(row.id)) await db.prepare("DELETE FROM projects WHERE id = ? AND user_id = ?").bind(row.id, userId).run();
+  }
   await db.prepare("PRAGMA optimize").run();
 }

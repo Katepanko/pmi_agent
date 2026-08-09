@@ -25,8 +25,10 @@ test("server-renders the PMI consulting workspace", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>Northstar \| PMI Reporting Agent<\/title>/i);
-  assert.match(html, /PMI reporting agent/i);
+  assert.match(html, /<title>PMI Agent \| Decision-ready integration reporting<\/title>/i);
+  assert.match(html, /PMI AGENT/i);
+  assert.match(html, />User</i);
+  assert.match(html, /PMI Agent/i);
   assert.match(html, /Executive report/i);
   assert.match(html, /Every applicable source is checked before synthesis/i);
   assert.match(html, /Content preview first/i);
@@ -65,7 +67,7 @@ test("returns a clear provider configuration error rather than a fabricated answ
   assert.match(body.error, /OPENAI_GPT56_MODEL/);
 });
 
-test("extracts multiple first-message files with record provenance and coverage", async () => {
+test("extracts multiple first-message files with compact provenance and coverage", async () => {
   const form = new FormData();
   form.append("files", new File([
     "Milestone,Owner,Due Date,Status\nERP design,Alex,2026-08-20,Amber\nPayroll cutover,Sam,2026-09-15,Green\n",
@@ -88,13 +90,27 @@ test("extracts multiple first-message files with record provenance and coverage"
     Status: "Amber",
   });
   assert.match(body.documents[1].rawText, /ERP testing is blocked/);
+  assert.ok(body.documents.every((document) => document.rawText.length <= 20_000));
+});
+
+test("keeps nine uploads isolated so one response cannot fail the entire batch", async () => {
+  const responses = await Promise.all(Array.from({ length: 9 }, async (_, index) => {
+    const form = new FormData();
+    form.append("fileId", `source-${index}`);
+    form.append("files", new File([`Item,Status\nWorkstream ${index},Green\n`], `Source_${index}.csv`, { type: "text/csv" }));
+    return request("/api/extract", { method: "POST", body: form });
+  }));
+  assert.ok(responses.every((response) => response.status === 200));
+  const bodies = await Promise.all(responses.map((response) => response.json()));
+  assert.deepEqual(bodies.map((body) => body.documents[0].fileId), Array.from({ length: 9 }, (_, index) => `source-${index}`));
 });
 
 test("keeps grounding, source coverage, and tenant boundaries explicit in source", async () => {
-  const [prompt, schema, packageJson] = await Promise.all([
+  const [prompt, schema, packageJson, exporter] = await Promise.all([
     readFile(new URL("../app/lib/pmi-prompt.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/report-export.ts", import.meta.url), "utf8"),
   ]);
 
   assert.match(prompt, /Consider every source/i);
@@ -105,4 +121,5 @@ test("keeps grounding, source coverage, and tenant boundaries explicit in source
   assert.match(schema, /projectId: text\("project_id"\)/);
   assert.match(schema, /reportDraftVersions/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
+  for (const format of ["pptx", "pdf", "xlsx", "docx", "html"]) assert.match(exporter, new RegExp(`\\b${format}\\b`));
 });

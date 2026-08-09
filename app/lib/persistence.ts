@@ -1,4 +1,4 @@
-type RuntimeEnv = { DB?: D1Database };
+import { getRuntimeBindings } from "./runtime-bindings";
 
 export type ArtifactFormat = "pptx" | "xlsx" | "docx" | "pdf" | "html";
 
@@ -15,8 +15,7 @@ export type ArtifactRecord = {
 };
 
 async function database() {
-  const { env } = await import("cloudflare:workers");
-  const db = (env as RuntimeEnv).DB;
+  const db = getRuntimeBindings().DB;
   if (!db) throw new Error("Persistent storage is unavailable: the DB binding is not configured.");
   return db;
 }

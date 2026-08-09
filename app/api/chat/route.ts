@@ -12,6 +12,7 @@ import {
   type ArtifactFormat,
 } from "../../lib/artifact";
 import { authenticatedUserId, loadLatestArtifact, loadLatestArtifactModel, saveArtifact } from "../../lib/persistence";
+import { getRuntimeBindings } from "../../lib/runtime-bindings";
 
 export const dynamic = "force-dynamic";
 
@@ -29,8 +30,6 @@ type ChatBody = {
   projectId?: string | null;
   chatTitle?: string;
 };
-
-type RuntimeEnv = { FILES?: R2Bucket };
 
 export async function POST(request: Request) {
   try {
@@ -71,8 +70,7 @@ export async function POST(request: Request) {
       const rendered = await renderArtifact({ format: requestedFormat, model: artifactModel, version, sources: body.sources ?? [] });
       await validateArtifact(rendered);
       const objectKey = `artifacts/${userId}/${body.chatId}/${artifactId}/${rendered.filename}`;
-      const { env } = await import("cloudflare:workers");
-      const bucket = (env as RuntimeEnv).FILES;
+      const bucket = getRuntimeBindings().FILES;
       if (!bucket) throw new Error("Artifact storage is unavailable: the FILES binding is not configured.");
       await bucket.put(objectKey, rendered.bytes, {
         httpMetadata: { contentType: rendered.mimeType, contentDisposition: `attachment; filename="${rendered.filename}"` },

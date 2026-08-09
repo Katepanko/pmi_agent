@@ -11,7 +11,7 @@ const model = {
   subtitle: "Steering Committee decision pack",
   audience: "Steering Committee",
   reportingPeriod: "Week 6 after Day 1",
-  executiveSummary: "Integration delivery remains broadly on track, while cutover accountability and synergy timing require executive resolution this week.",
+  executiveSummary: "Integration delivery remains broadly on track → cutover accountability and synergy timing require executive resolution this week.",
   sections: [
     { name: "Trajectory", title: "Execution remains manageable, with pressure concentrated at the IT–Finance boundary", keyMessage: "Most milestones remain active; the only critical-path exposure is an unresolved cross-functional cutover dependency.", type: "status", items: [
       { label: "Overall trajectory", value: "On track", detail: "The integrated plan shows most workstreams continuing against the current baseline.", implication: "Management attention can remain focused on the small number of exceptions.", status: "green", evidenceType: "fact", sourceRefs: ["src-plan"] },

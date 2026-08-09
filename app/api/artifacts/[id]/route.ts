@@ -1,8 +1,7 @@
 import { authenticatedUserId, findArtifact } from "../../../lib/persistence";
+import { getRuntimeBindings } from "../../../lib/runtime-bindings";
 
 export const dynamic = "force-dynamic";
-
-type RuntimeEnv = { FILES?: R2Bucket };
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
@@ -10,8 +9,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     const artifact = await findArtifact(authenticatedUserId(request), id);
     if (!artifact) return Response.json({ error: "Artifact not found." }, { status: 404 });
 
-    const { env } = await import("cloudflare:workers");
-    const object = await (env as RuntimeEnv).FILES?.get(artifact.object_key);
+    const object = await getRuntimeBindings().FILES?.get(artifact.object_key);
     if (!object) return Response.json({ error: "The stored artifact file is unavailable." }, { status: 404 });
 
     return new Response(object.body, {

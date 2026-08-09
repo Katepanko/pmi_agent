@@ -9,8 +9,28 @@ const COLORS = {
   amber: rgb(0.80, 0.49, 0.08), red: rgb(0.72, 0.19, 0.19), white: rgb(1, 1, 1),
 };
 
+const PDF_ASCII_FALLBACKS: Record<string, string> = {
+  "→": "->", "←": "<-", "↔": "<->", "⇒": "=>", "⇐": "<=", "⇔": "<=>",
+  "—": "-", "–": "-", "‑": "-", "−": "-", "…": "...", "•": "*",
+  "“": '"', "”": '"', "„": '"', "‘": "'", "’": "'", "‚": "'", " ": " ",
+};
+
+function pdfSafe(value: string, font: PDFFont) {
+  let safe = "";
+  for (const character of String(value ?? "").normalize("NFC")) {
+    const candidate = PDF_ASCII_FALLBACKS[character] ?? character;
+    try {
+      font.encodeText(candidate);
+      safe += candidate;
+    } catch {
+      safe += "?";
+    }
+  }
+  return safe;
+}
+
 function wrap(text: string, font: PDFFont, size: number, maxWidth: number) {
-  const paragraphs = String(text || "").split(/\n/);
+  const paragraphs = pdfSafe(String(text || ""), font).split(/\n/);
   const lines: string[] = [];
   for (const paragraph of paragraphs) {
     let current = "";

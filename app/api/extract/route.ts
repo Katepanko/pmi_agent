@@ -1,14 +1,13 @@
 import { extractFile, createCoverageCheck } from "../../lib/ingestion/pipeline";
 import { authenticatedUserId } from "../../lib/persistence";
 import type { ExtractedDocument } from "../../lib/ingestion/types";
+import { getRuntimeBindings } from "../../lib/runtime-bindings";
 
 export const dynamic = "force-dynamic";
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
 const MAX_FILES = 20;
 const MAX_EXCERPT = 20_000;
-
-type RuntimeEnv = { FILES?: R2Bucket };
 
 function isUpload(value: FormDataEntryValue): value is File {
   return typeof value === "object" && value !== null && "name" in value && "size" in value && "arrayBuffer" in value;
@@ -47,8 +46,7 @@ export async function POST(request: Request) {
     const fileId = files.length === 1 && requestedId ? requestedId : crypto.randomUUID();
     const objectKey = `staged/${userId}/${fileId}`;
     try {
-      const { env } = await import("cloudflare:workers");
-      await (env as RuntimeEnv).FILES?.put(objectKey, await file.arrayBuffer(), {
+      await getRuntimeBindings().FILES?.put(objectKey, await file.arrayBuffer(), {
         httpMetadata: { contentType: file.type || "application/octet-stream" },
         customMetadata: { fileName: safeName(file.name), userId, uploadIndex: String(index) },
       });

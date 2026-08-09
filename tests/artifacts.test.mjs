@@ -13,7 +13,7 @@ const report = {
   subtitle: "Decision-ready view",
   audience: "Steering Committee",
   reportingPeriod: "Week 6",
-  executiveSummary: "Delivery remains broadly on track, while two critical dependencies require management action this week.",
+  executiveSummary: "Delivery remains broadly on track → two critical dependencies require management action this week.",
   sections: [
     {
       name: "Trajectory",
@@ -22,7 +22,7 @@ const report = {
       type: "status",
       items: [
         { label: "Integration trajectory", value: "On track", detail: "Most planned milestones remain active.", implication: "Management attention can remain targeted.", status: "green", evidenceType: "fact", sourceRefs: ["src-plan"] },
-        { label: "Cutover dependency", detail: "The accountable owner is not evidenced.", implication: "The recovery path cannot yet be validated.", recommendation: "Assign one accountable executive.", status: "red", evidenceType: "gap", sourceRefs: ["src-risk"] },
+        { label: "Cutover dependency → decision", detail: "The accountable owner is not evidenced.", implication: "The recovery path cannot yet be validated.", recommendation: "Assign one accountable executive.", status: "red", evidenceType: "gap", sourceRefs: ["src-risk"] },
       ],
       sourceNotes: ["Owner field is incomplete in the current risk register."],
     },

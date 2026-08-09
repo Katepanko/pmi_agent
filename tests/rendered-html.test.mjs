@@ -19,6 +19,20 @@ async function request(path = "/", init) {
   );
 }
 
+function emptyD1() {
+  return {
+    prepare(sql) {
+      return {
+        bind() { return this; },
+        async run() { return { success: true }; },
+        async first() { return null; },
+        async all() { return { results: sql.startsWith("PRAGMA table_info") ? [] : [] }; },
+      };
+    },
+    async batch(statements) { return statements.map(() => ({ results: [] })); },
+  };
+}
+
 test("server-renders the PMI consulting workspace", async () => {
   const response = await request();
   assert.equal(response.status, 200);
@@ -34,6 +48,17 @@ test("server-renders the PMI consulting workspace", async () => {
   assert.match(html, /generated and attached directly/i);
   assert.match(html, /Source coverage complete/i);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/i);
+});
+
+test("propagates hosted D1 bindings into route handlers without cloudflare protocol imports", async () => {
+  const worker = await loadWorker();
+  const response = await worker.fetch(
+    new Request("http://localhost/api/workspace"),
+    { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) }, DB: emptyD1() },
+    { waitUntil() {}, passThroughOnException() {} },
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { projects: [], chats: [] });
 });
 
 test("exposes configured model display names without leaking secrets", async () => {

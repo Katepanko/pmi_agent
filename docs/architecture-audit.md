@@ -51,6 +51,15 @@ Sites full-stack starter as its deployment surface.
 7. Expand fixtures, leakage tests, security controls, observability, and cost
    reporting.
 
+## PowerPoint generation update
+
+PowerPoint intent now branches before the normal text stream. The model produces
+a validated presentation model; a server-side renderer creates the PPTX; R2
+stores the binary; and D1 associates artifact metadata and the complete model
+with the assistant message. Follow-up slide revisions load that model, preserve
+unaffected slides, and write a new immutable artifact version. Ordinary status
+questions continue through the text chat path.
+
 This document records the mandated pre-change audit. It is intentionally candid:
 features are only marked implemented when their production path exists and is
 covered by validation.

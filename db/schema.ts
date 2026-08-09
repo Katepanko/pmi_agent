@@ -171,6 +171,30 @@ export const reportDraftVersions = sqliteTable(
   (table) => [uniqueIndex("idx_draft_version").on(table.draftId, table.version)],
 );
 
+export const artifacts = sqliteTable(
+  "artifacts",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull(),
+    projectId: text("project_id").references(() => projects.id, { onDelete: "set null" }),
+    chatId: text("chat_id").notNull().references(() => chats.id, { onDelete: "cascade" }),
+    messageId: text("message_id").notNull().references(() => messages.id, { onDelete: "cascade" }),
+    filename: text("filename").notNull(),
+    mimeType: text("mime_type").notNull(),
+    objectKey: text("object_key").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    reportType: text("report_type"),
+    version: integer("version").notNull().default(1),
+    slideCount: integer("slide_count"),
+    presentationJson: text("presentation_json"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    index("idx_artifacts_chat_created").on(table.chatId, table.createdAt),
+    uniqueIndex("idx_artifacts_message").on(table.messageId),
+  ],
+);
+
 export const modelUsage = sqliteTable(
   "model_usage",
   {

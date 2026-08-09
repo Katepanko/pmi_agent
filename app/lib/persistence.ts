@@ -1,5 +1,16 @@
 type RuntimeEnv = { DB?: D1Database };
 
+export type ArtifactRecord = {
+  id: string;
+  name: string;
+  format: "pptx";
+  mimeType: string;
+  url: string;
+  size: number;
+  slideCount: number;
+  version: number;
+};
+
 async function database() {
   const { env } = await import("cloudflare:workers");
   const db = (env as RuntimeEnv).DB;
@@ -51,6 +62,18 @@ export async function ensureCoreSchema() {
     )`),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_sources_chat_status ON sources(chat_id, extraction_status)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_sources_project ON sources(project_id)"),
+    db.prepare(`CREATE TABLE IF NOT EXISTS artifacts (
+      id TEXT PRIMARY KEY NOT NULL, user_id TEXT NOT NULL, project_id TEXT,
+      chat_id TEXT NOT NULL, message_id TEXT NOT NULL, filename TEXT NOT NULL,
+      mime_type TEXT NOT NULL, object_key TEXT NOT NULL, size_bytes INTEGER NOT NULL,
+      report_type TEXT, version INTEGER NOT NULL DEFAULT 1, slide_count INTEGER,
+      presentation_json TEXT, created_at TEXT NOT NULL,
+      FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE SET NULL,
+      FOREIGN KEY(chat_id) REFERENCES chats(id) ON DELETE CASCADE,
+      FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE
+    )`),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_artifacts_chat_created ON artifacts(chat_id, created_at)"),
+    db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_artifacts_message ON artifacts(message_id)"),
   ]).then(() => undefined).catch((error) => {
     schemaReady = null;
     throw error;
@@ -70,7 +93,7 @@ export type WorkspaceSnapshot = {
     audience: string;
     modelKey?: string;
     projectId: string | null;
-    messages: Array<{ id: string; role: "user" | "assistant"; content: string; createdAt: string; variant?: "demo-report" | "error" }>;
+    messages: Array<{ id: string; role: "user" | "assistant"; content: string; createdAt: string; variant?: "demo-report" | "error"; artifact?: ArtifactRecord }>;
     sources: Array<{ id: string; name: string; type: string; size: number; status: "extracted" | "partial" | "pending" | "failed"; excerpt?: string; warnings?: string[] }>;
   }>;
 };
@@ -78,17 +101,19 @@ export type WorkspaceSnapshot = {
 export async function loadWorkspace(userId: string): Promise<WorkspaceSnapshot> {
   await ensureCoreSchema();
   const db = await database();
-  const [projectRows, chatRows, messageRows, sourceRows] = await db.batch([
+  const [projectRows, chatRows, messageRows, sourceRows, artifactRows] = await db.batch([
     db.prepare("SELECT id, name, description, icon FROM projects WHERE user_id = ? AND archived_at IS NULL ORDER BY updated_at DESC").bind(userId),
     db.prepare("SELECT id, project_id, title, model_key, audience FROM chats WHERE user_id = ? AND archived_at IS NULL ORDER BY updated_at DESC").bind(userId),
     db.prepare("SELECT m.id, m.chat_id, m.role, m.content, m.classification, m.created_at FROM messages m INNER JOIN chats c ON c.id = m.chat_id WHERE c.user_id = ? ORDER BY m.created_at ASC").bind(userId),
     db.prepare("SELECT id, project_id, chat_id, file_name, file_type, size_bytes, extraction_status, extraction_warnings_json, metadata_json FROM sources WHERE user_id = ? ORDER BY created_at ASC").bind(userId),
+    db.prepare("SELECT id, chat_id, message_id, filename, mime_type, size_bytes, version, slide_count FROM artifacts WHERE user_id = ? ORDER BY created_at ASC").bind(userId),
   ]);
 
   const rawProjects = projectRows.results as Array<Record<string, unknown>>;
   const rawChats = chatRows.results as Array<Record<string, unknown>>;
   const rawMessages = messageRows.results as Array<Record<string, unknown>>;
   const rawSources = sourceRows.results as Array<Record<string, unknown>>;
+  const rawArtifacts = artifactRows.results as Array<Record<string, unknown>>;
 
   const chats = rawChats.map((chat) => ({
     id: String(chat.id),
@@ -96,13 +121,26 @@ export async function loadWorkspace(userId: string): Promise<WorkspaceSnapshot> 
     audience: String(chat.audience),
     modelKey: String(chat.model_key),
     projectId: chat.project_id ? String(chat.project_id) : null,
-    messages: rawMessages.filter((message) => message.chat_id === chat.id).map((message) => ({
-      id: String(message.id),
-      role: message.role as "user" | "assistant",
-      content: String(message.content),
-      createdAt: new Date(String(message.created_at)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-      variant: message.classification === "error" ? "error" as const : undefined,
-    })),
+    messages: rawMessages.filter((message) => message.chat_id === chat.id).map((message) => {
+      const artifact = rawArtifacts.find((candidate) => candidate.message_id === message.id);
+      return {
+        id: String(message.id),
+        role: message.role as "user" | "assistant",
+        content: String(message.content),
+        createdAt: new Date(String(message.created_at)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        variant: message.classification === "error" ? "error" as const : undefined,
+        artifact: artifact ? {
+          id: String(artifact.id),
+          name: String(artifact.filename),
+          format: "pptx" as const,
+          mimeType: String(artifact.mime_type),
+          url: `/api/artifacts/${String(artifact.id)}`,
+          size: Number(artifact.size_bytes),
+          slideCount: Number(artifact.slide_count ?? 0),
+          version: Number(artifact.version),
+        } : undefined,
+      };
+    }),
     sources: rawSources.filter((source) => source.chat_id === chat.id).map((source) => {
       const metadata = JSON.parse(String(source.metadata_json || "{}")) as { excerpt?: string };
       return {
@@ -128,6 +166,74 @@ export async function loadWorkspace(userId: string): Promise<WorkspaceSnapshot> 
     })),
     chats,
   };
+}
+
+export async function loadLatestPresentation(userId: string, chatId: string) {
+  await ensureCoreSchema();
+  const db = await database();
+  const row = await db.prepare(`SELECT a.presentation_json, a.version
+    FROM artifacts a INNER JOIN chats c ON c.id = a.chat_id
+    WHERE a.chat_id = ? AND a.user_id = ? AND c.user_id = ? AND a.mime_type = ?
+    ORDER BY a.version DESC, a.created_at DESC LIMIT 1
+  `).bind(chatId, userId, userId, "application/vnd.openxmlformats-officedocument.presentationml.presentation").first<{ presentation_json: string | null; version: number }>();
+  if (!row?.presentation_json) return null;
+  return { presentation: JSON.parse(row.presentation_json) as unknown, version: Number(row.version) };
+}
+
+export async function savePresentationArtifact(input: {
+  userId: string;
+  chatId: string;
+  messageId: string;
+  projectId?: string | null;
+  chatTitle: string;
+  audience: string;
+  modelKey: string;
+  message: string;
+  artifactId: string;
+  filename: string;
+  mimeType: string;
+  objectKey: string;
+  sizeBytes: number;
+  version: number;
+  slideCount: number;
+  presentation: unknown;
+}) {
+  await ensureCoreSchema();
+  const db = await database();
+  const now = new Date().toISOString();
+  const existingChat = await db.prepare("SELECT user_id FROM chats WHERE id = ?").bind(input.chatId).first<{ user_id: string }>();
+  if (existingChat && existingChat.user_id !== input.userId) throw new Error("Chat boundary violation.");
+  let projectId: string | null = null;
+  if (input.projectId) {
+    const project = await db.prepare("SELECT user_id FROM projects WHERE id = ?").bind(input.projectId).first<{ user_id: string }>();
+    if (project?.user_id === input.userId) projectId = input.projectId;
+  }
+  if (!existingChat) {
+    await db.prepare(`INSERT INTO chats (id, user_id, project_id, title, model_key, audience, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(input.chatId, input.userId, projectId, input.chatTitle, input.modelKey, input.audience, now, now).run();
+  }
+  await db.prepare(`INSERT INTO messages (id, chat_id, role, content, classification, model_key, created_at)
+    VALUES (?, ?, 'assistant', ?, 'artifact', ?, ?)
+    ON CONFLICT(id) DO UPDATE SET content = excluded.content, classification = excluded.classification, model_key = excluded.model_key
+  `).bind(input.messageId, input.chatId, input.message, input.modelKey, now).run();
+  await db.prepare(`INSERT INTO artifacts (
+    id, user_id, project_id, chat_id, message_id, filename, mime_type, object_key,
+    size_bytes, report_type, version, slide_count, presentation_json, created_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'presentation', ?, ?, ?, ?)
+  `).bind(
+    input.artifactId, input.userId, projectId, input.chatId, input.messageId, input.filename,
+    input.mimeType, input.objectKey, input.sizeBytes, input.version, input.slideCount,
+    JSON.stringify(input.presentation), now,
+  ).run();
+}
+
+export async function findArtifact(userId: string, artifactId: string) {
+  await ensureCoreSchema();
+  const db = await database();
+  return db.prepare(`SELECT id, filename, mime_type, object_key, size_bytes
+    FROM artifacts WHERE id = ? AND user_id = ?
+  `).bind(artifactId, userId).first<{ id: string; filename: string; mime_type: string; object_key: string; size_bytes: number }>();
 }
 
 export async function syncWorkspace(userId: string, snapshot: WorkspaceSnapshot) {

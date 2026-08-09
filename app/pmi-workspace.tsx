@@ -1,7 +1,6 @@
 "use client";
 
 import { DragEvent, FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
-import { createReportArtifact, type ReportFormat } from "./lib/report-export";
 
 type ModelOption = {
   key: string;
@@ -28,7 +27,16 @@ type Message = {
   createdAt: string;
   attachments?: Attachment[];
   variant?: "demo-report" | "error";
-  artifact?: { name: string; format: ReportFormat; url: string };
+  artifact?: {
+    id: string;
+    name: string;
+    format: "pptx";
+    mimeType: string;
+    url: string;
+    size: number;
+    slideCount: number;
+    version: number;
+  };
 };
 
 type Chat = {
@@ -130,17 +138,6 @@ function fileGlyph(type: string) {
   return "FL";
 }
 
-function requestedFormat(value: string): ReportFormat | null {
-  const text = value.toLowerCase();
-  if (!/\b(generate|create|export|download|make)\b/.test(text)) return null;
-  if (/powerpoint|pptx|slide deck/.test(text)) return "pptx";
-  if (/excel|xlsx|spreadsheet/.test(text)) return "xlsx";
-  if (/word|docx|document/.test(text)) return "docx";
-  if (/pdf/.test(text)) return "pdf";
-  if (/html|dashboard/.test(text)) return "html";
-  return null;
-}
-
 export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }) {
   const [projects, setProjects] = useState(initialProjects);
   const [chats, setChats] = useState(initialChats);
@@ -153,7 +150,6 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
   const [isDragging, setIsDragging] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [workspaceDirty, setWorkspaceDirty] = useState(false);
-  const [exportOpen, setExportOpen] = useState(false);
   const [selectedModel, setSelectedModel] = useState(initialModels.find((model) => model.key === "openai-gpt56")?.key ?? initialModels[0]?.key ?? "openai-gpt56");
   const abortRef = useRef<AbortController | null>(null);
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -203,41 +199,13 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
     setChats((current) => current.map((chat) => (chat.id === activeChatId ? updater(chat) : chat)));
   };
 
-  const downloadReport = (format: ReportFormat, content?: string, addMessage = true) => {
-    const draft = content ?? [...activeChat.messages].reverse().find((message) => message.role === "assistant" && message.variant !== "error" && message.content.trim())?.content;
-    if (!draft) return false;
-    const { blob, fileName } = createReportArtifact(format, {
-      title: activeChat.title,
-      audience: activeChat.audience,
-      content: draft,
-      sources: activeChat.sources.map((source) => ({ name: source.name, status: source.status })),
-    });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = fileName;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    if (addMessage) {
-      updateActiveChat((chat) => ({ ...chat, messages: [...chat.messages, {
-        id: uid("message"), role: "assistant", createdAt: "Now",
-        content: `Your ${format.toUpperCase()} file is ready.`,
-        artifact: { name: fileName, format, url },
-      }] }));
-      scrollToBottom();
-    }
-    setExportOpen(false);
-    return true;
-  };
-
   const addFiles = async (files: File[]) => {
     const supported = ["xlsx", "xls", "csv", "pptx", "docx", "pdf", "html", "htm", "png", "jpg", "jpeg"];
     const additions = await Promise.all(
       files.map(async (file): Promise<Attachment> => {
         const type = file.name.split(".").pop()?.toLowerCase() || "file";
         const textReadable = ["csv", "html", "htm"].includes(type);
-        const excerpt = textReadable ? (await file.text()).slice(0, 4_000) : undefined;
+        const excerpt = textReadable ? (await file.text()).slice(0, 20_000) : undefined;
         return {
           id: uid("file"),
           name: file.name,
@@ -266,7 +234,7 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
         const document = payload.documents?.[0];
         if (!response.ok || !document) throw new Error(payload.error ?? "Extraction service unavailable.");
         setQueuedFiles((current) => current.map((queued) => queued.id === attachment.id
-          ? { ...queued, status: document.status, excerpt: document.rawText.slice(0, 4_000), warnings: document.extractionWarnings }
+          ? { ...queued, status: document.status, excerpt: document.rawText, warnings: document.extractionWarnings }
           : queued));
       } catch (error) {
         const warning = error instanceof Error ? error.message : "Extraction service unavailable.";
@@ -319,17 +287,6 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
     const assistantId = uid("message");
     const combinedSources = [...activeChat.sources, ...queuedFiles];
     const history = activeChat.messages.map(({ role, content }) => ({ role, content }));
-    const format = requestedFormat(userMessage.content);
-    const latestDraft = [...activeChat.messages].reverse().find((message) => message.role === "assistant" && message.variant !== "error" && message.content.trim())?.content;
-
-    if (format && latestDraft && queuedFiles.length === 0) {
-      updateActiveChat((chat) => ({ ...chat, messages: [...chat.messages, userMessage] }));
-      setComposer("");
-      if (textAreaRef.current) textAreaRef.current.style.height = "56px";
-      window.setTimeout(() => downloadReport(format, latestDraft), 0);
-      return;
-    }
-
     updateActiveChat((chat) => ({
       ...chat,
       modelKey: selectedModel,
@@ -356,6 +313,10 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
           history,
           audience: activeChat.audience,
           projectContext: activeProject?.context,
+          projectId: activeProject?.id ?? null,
+          chatId: activeChat.id,
+          chatTitle: activeChat.title,
+          assistantMessageId: assistantId,
           sources: combinedSources.map((source) => ({
             id: source.id,
             fileName: source.name,
@@ -370,6 +331,18 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
       if (!response.ok) {
         const payload = (await response.json().catch(() => ({}))) as { error?: string };
         throw new Error(payload.error ?? "The selected model could not be reached.");
+      }
+      const contentType = response.headers.get("content-type") ?? "";
+      if (contentType.includes("application/json")) {
+        const payload = (await response.json()) as { kind?: string; message?: string; artifact?: Message["artifact"]; error?: string };
+        if (payload.kind !== "artifact" || !payload.message || !payload.artifact) throw new Error(payload.error ?? "The artifact response was incomplete.");
+        updateActiveChat((chat) => ({
+          ...chat,
+          messages: chat.messages.map((message) => message.id === assistantId
+            ? { ...message, content: payload.message!, artifact: payload.artifact }
+            : message),
+        }));
+        return;
       }
       if (!response.body) throw new Error("The model returned no response stream.");
 
@@ -390,6 +363,11 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
     } catch (error) {
       if ((error as Error).name !== "AbortError") {
         const detail = error instanceof Error ? error.message : "Generation failed.";
+        const connectionIssue = /(?:API_KEY|_MODEL\b|provider key|authentication|unauthorized|could not be reached|connection)/i.test(detail);
+        const fileRequest = /\b(?:power\s*point|pptx?|presentation|slide\s*deck|deck|slides?)\b/i.test(userMessage.content);
+        const errorContent = connectionIssue
+          ? `Model connection required\n\n${detail}\n\nAdd the provider key and configured model ID to the server environment. Uploaded files and project context remain in this chat.`
+          : `${fileRequest ? "PowerPoint generation failed" : "Generation failed"}\n\n${detail}\n\nYour report text, uploaded files, and project context remain available. Retry the request; no artifact was stored.`;
         updateActiveChat((chat) => ({
           ...chat,
           messages: chat.messages.map((message) =>
@@ -397,7 +375,7 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
               ? {
                   ...message,
                   variant: "error",
-                  content: `Model connection required\n\n${detail}\n\nAdd the provider key and configured model ID to the server environment. Uploaded files and project context remain in this chat.`,
+                  content: errorContent,
                 }
               : message,
           ),
@@ -595,12 +573,6 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
               <span className="stack-icon">▱</span> Sources <b>{allSourceCount}</b>
             </button>
             {activeProject && <button className={`header-pill context-button ${contextOpen ? "active" : ""}`} onClick={() => setContextOpen((open) => !open)}>Project context</button>}
-            <div className="export-wrap">
-              <button className={`header-pill ${exportOpen ? "active" : ""}`} onClick={() => setExportOpen((open) => !open)}>Export <span>⌄</span></button>
-              {exportOpen && <div className="export-menu">
-                {(["pptx", "pdf", "xlsx", "docx", "html"] as ReportFormat[]).map((format) => <button key={format} onClick={() => downloadReport(format)}>{format === "pptx" ? "PowerPoint" : format === "xlsx" ? "Excel workbook" : format === "docx" ? "Word document" : format === "html" ? "HTML dashboard" : "PDF"}<span>.{format}</span></button>)}
-              </div>}
-            </div>
             <button className="more-button" aria-label="Chat actions">•••</button>
           </div>
         </header>
@@ -714,6 +686,26 @@ function EmptyConversation({ project, onPrompt }: { project: Project | null; onP
 }
 
 function MessageView({ message, generating }: { message: Message; generating: boolean }) {
+  const [copied, setCopied] = useState(false);
+
+  const copyMessage = async () => {
+    try {
+      await navigator.clipboard.writeText(message.content);
+    } catch {
+      const fallback = document.createElement("textarea");
+      fallback.value = message.content;
+      fallback.setAttribute("readonly", "");
+      fallback.style.position = "fixed";
+      fallback.style.opacity = "0";
+      document.body.appendChild(fallback);
+      fallback.select();
+      document.execCommand("copy");
+      fallback.remove();
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1_500);
+  };
+
   if (message.role === "user") {
     return (
       <article className="message user-message">
@@ -742,9 +734,9 @@ function MessageView({ message, generating }: { message: Message; generating: bo
         {message.variant === "demo-report" ? <DemoReport /> : (
           <div className="streamed-content">{message.content}{generating && <span className="typing-cursor" />}</div>
         )}
-        {message.artifact && <a className="artifact-download" href={message.artifact.url} download={message.artifact.name}><span className={`file-glyph ${message.artifact.format}`}>{fileGlyph(message.artifact.format)}</span><span><strong>{message.artifact.name}</strong><small>Download {message.artifact.format.toUpperCase()}</small></span><b>↓</b></a>}
+        {message.artifact && <a className="artifact-download" href={message.artifact.url} download={message.artifact.name}><span className={`file-glyph ${message.artifact.format}`}>{fileGlyph(message.artifact.format)}</span><span><strong>{message.artifact.name}</strong><small>{message.artifact.slideCount} slides · PowerPoint presentation · {fileSize(message.artifact.size)}</small></span><b>Download</b></a>}
         {!generating && message.content && message.variant !== "error" && (
-          <div className="message-actions"><button>Copy</button><button>Useful</button><button>Needs work</button><button>•••</button></div>
+          <div className="message-actions"><button type="button" onClick={() => void copyMessage()} aria-live="polite">{copied ? "Copied" : "Copy"}</button></div>
         )}
       </div>
     </article>
@@ -790,7 +782,7 @@ function DemoReport() {
         <div><strong>Source coverage complete</strong><span>4 of 4 applicable files considered · material conflicts and gaps disclosed</span></div>
         <button>Inspect evidence →</button>
       </div>
-      <div className="draft-note"><span>Content preview first</span>The report remains editable in chat. Generate PowerPoint, Excel, Word, or PDF only after the draft is ready.</div>
+      <div className="draft-note"><span>Conversational workflow</span>Ask for a PowerPoint when you need the file; it will be generated and attached directly to that assistant message.</div>
     </div>
   );
 }

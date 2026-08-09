@@ -22,7 +22,8 @@ The current vertical slice includes:
 - D1-backed project, chat, message, and source metadata persistence;
 - version-ready knowledge, authority-rule, draft, draft-version, provenance, and
   model-usage schema;
-- text-first report preview behavior with a PMI-specific grounding prompt;
+- explicit PowerPoint intent and revision handling with a structured, LLM-owned storyline model;
+- server-side consulting-style PPTX rendering, R2 storage, D1 artifact metadata, and per-message downloads;
 - responsive black, green, and white consulting-chat interface.
 
 See [docs/architecture-audit.md](docs/architecture-audit.md) for the initial
@@ -65,8 +66,7 @@ persistence foundation. The next production phases are:
 - hierarchical retrieval over large corpora and deterministic conflict
   normalization;
 - full knowledge-version and source-priority-rule services;
-- stored and conversationally revised report draft versions;
-- editable, template-aware PPTX/XLSX/DOCX/PDF renderers with visual QA;
+- editable XLSX/DOCX/PDF renderers and configured corporate-template ingestion;
 - authentication policy, enterprise tenancy, malware scanning, retention,
   observability, and provider cost estimation.
 

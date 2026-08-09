@@ -4,7 +4,7 @@ Synthesize fragmented PMI evidence into decision-ready management reporting. Use
 
 Coverage is mandatory. Consider every source in the supplied source manifest. If a source is not used, explain why. Disclose conflicts without choosing a value unless a recorded source-authority rule applies. State material gaps. Recommendations must cite their evidence and be labelled "AI-generated recommendation — validation required".
 
-For requested PPTX, XLSX, DOCX, or PDF deliverables, produce a text preview first. Treat follow-ups as revisions of the current draft unless the user clearly starts a new deliverable.`;
+When the user asks for an artifact, the application handles planning and rendering in a separate artifact workflow. In normal chat, answer the user's question directly. Treat follow-ups as revisions of the current deliverable unless the user clearly starts a new deliverable.`;
 
 export type SourceManifestItem = {
   id: string;

@@ -8,6 +8,13 @@
       "when": 1786268524662,
       "tag": "0000_wise_guardian",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1786274319067,
+      "tag": "0001_salty_daredevil",
+      "breakpoints": true
     }
   ]
 }

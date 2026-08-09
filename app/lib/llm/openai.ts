@@ -1,14 +1,26 @@
 import type { GenerationRequest, LLMProvider } from "./provider";
 import { mapServerSentEvents } from "./provider";
+import { extractOpenAIResponseText, type OpenAIResponsePayload } from "./openai-response";
 
 export class OpenAIProvider implements LLMProvider {
-  constructor(private readonly apiKey: string) {}
+  private readonly apiKey: string;
+
+  constructor(apiKey: string) {
+    this.apiKey = apiKey;
+  }
 
   async generate(request: GenerationRequest) {
     const response = await this.request(request, false);
-    const payload = (await response.json()) as { output_text?: string; error?: { message?: string } };
+    const payload = (await response.json()) as OpenAIResponsePayload;
     if (!response.ok) throw new Error(payload.error?.message ?? "OpenAI request failed.");
-    return payload.output_text ?? "";
+    const output = extractOpenAIResponseText(payload);
+    if (!output.trim()) {
+      const reason = payload.incomplete_details?.reason
+        ? ` The response was incomplete: ${payload.incomplete_details.reason}.`
+        : payload.status ? ` Response status: ${payload.status}.` : "";
+      throw new Error(`OpenAI returned no text output.${reason}`);
+    }
+    return output;
   }
 
   async stream(request: GenerationRequest) {

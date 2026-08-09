@@ -31,7 +31,7 @@ test("server-renders the PMI consulting workspace", async () => {
   assert.match(html, /PMI Agent/i);
   assert.match(html, /Executive report/i);
   assert.match(html, /Every applicable source is checked before synthesis/i);
-  assert.match(html, /Content preview first/i);
+  assert.match(html, /generated and attached directly/i);
   assert.match(html, /Source coverage complete/i);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/i);
 });
@@ -105,12 +105,13 @@ test("keeps nine uploads isolated so one response cannot fail the entire batch",
   assert.deepEqual(bodies.map((body) => body.documents[0].fileId), Array.from({ length: 9 }, (_, index) => `source-${index}`));
 });
 
-test("keeps grounding, source coverage, and tenant boundaries explicit in source", async () => {
-  const [prompt, schema, packageJson, exporter] = await Promise.all([
+test("keeps grounding, artifacts, and tenant boundaries explicit in source", async () => {
+  const [prompt, schema, packageJson, presentation, workspace] = await Promise.all([
     readFile(new URL("../app/lib/pmi-prompt.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
-    readFile(new URL("../app/lib/report-export.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/presentation.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/pmi-workspace.tsx", import.meta.url), "utf8"),
   ]);
 
   assert.match(prompt, /Consider every source/i);
@@ -120,6 +121,14 @@ test("keeps grounding, source coverage, and tenant boundaries explicit in source
   assert.match(schema, /userId: text\("user_id"\)\.notNull\(\)/);
   assert.match(schema, /projectId: text\("project_id"\)/);
   assert.match(schema, /reportDraftVersions/);
+  assert.match(schema, /export const artifacts/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
-  for (const format of ["pptx", "pdf", "xlsx", "docx", "html"]) assert.match(exporter, new RegExp(`\\b${format}\\b`));
+  assert.match(packageJson, /pptxgenjs/);
+  assert.match(presentation, /renderPresentation/);
+  assert.match(presentation, /power\\s\*point\|pptx\?/i);
+  assert.match(presentation, /presentation\|slide\\s\*deck\|deck\|slides\?/i);
+  assert.doesNotMatch(workspace, />Useful</);
+  assert.doesNotMatch(workspace, />Needs work</);
+  assert.doesNotMatch(workspace, />Export</);
+  assert.match(workspace, /navigator\.clipboard\.writeText\(message\.content\)/);
 });

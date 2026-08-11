@@ -55,9 +55,17 @@ npm run lint
 npm run db:generate
 ```
 
-The deployment build targets Cloudflare Workers through vinext. D1 is declared
-as `DB`; R2 is declared as `FILES`. The generated SQL migration is stored in
-`drizzle/`.
+The deployment build targets Cloudflare Workers through vinext. Standard
+Cloudflare configuration lives in `wrangler.jsonc`: D1 is bound as `DB`, R2 is
+bound as `FILES`, and generated SQL migrations are stored in `drizzle/`.
+
+Before deploying, create a D1 database and R2 bucket in the target Cloudflare
+account. Replace the placeholder D1 `database_id` in `wrangler.jsonc` with the
+created database ID, and adjust the resource names if needed. Then deploy with:
+
+```bash
+npm run deploy
+```
 
 ## Honest limitations
 

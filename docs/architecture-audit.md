@@ -4,8 +4,10 @@
 
 The workspace was greenfield at the start of implementation. It contained only
 `prompt.txt`; there was no application, source-control metadata, test suite, or
-existing architecture to preserve. The application therefore uses the bundled
-Sites full-stack starter as its deployment surface.
+existing architecture to preserve. The initial application used the bundled
+Sites full-stack starter. Its deployment wiring was subsequently migrated to
+standard Cloudflare Workers configuration so the application has no dependency
+on OpenAI hosting.
 
 ## Chosen architecture
 

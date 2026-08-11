@@ -245,8 +245,9 @@ model, version number, and parent artifact ID, enabling conversational revision
 without rebuilding every unaffected part from scratch.
 
 The application is built for a Cloudflare Worker-compatible ESM deployment via
-vinext. Configuration lives in `.openai/hosting.json`, `vite.config.ts`, and the
-runtime binding helpers.
+vinext. Standard deployment and binding configuration lives in `wrangler.jsonc`
+and `vite.config.ts`; runtime binding access is isolated in the binding helpers.
+The application does not depend on OpenAI hosting.
 
 ### 9. Validation
 
@@ -263,4 +264,3 @@ npm run db:generate
 These checks validate the software paths and generated file structures. They do
 not replace human review of consulting judgments, which is why generated
 recommendations are labelled as requiring validation.
-

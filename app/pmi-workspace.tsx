@@ -551,7 +551,7 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
         <div className="sidebar-footer">
           <div className="profile-avatar">U</div>
           {!sidebarCollapsed && <div><strong>User</strong><span>Private workspace</span></div>}
-          {!sidebarCollapsed && <button className="footer-more" aria-label="Workspace menu">•••</button>}
+         {/* {!sidebarCollapsed && <button className="footer-more" aria-label="Workspace menu">•••</button>}*/}
         </div>
       </aside>
 
@@ -577,7 +577,7 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
               <span className="stack-icon">▱</span> Sources <b>{allSourceCount}</b>
             </button>
             {activeProject && <button className={`header-pill context-button ${contextOpen ? "active" : ""}`} onClick={() => setContextOpen((open) => !open)}>Project context</button>}
-            <button className="more-button" aria-label="Chat actions">•••</button>
+            {/* <button className="more-button" aria-label="Chat actions">•••</button> */}
           </div>
         </header>
 

@@ -29,6 +29,10 @@ The current vertical slice includes:
 See [docs/architecture-audit.md](docs/architecture-audit.md) for the initial
 audit and staged gap map.
 
+See [docs/how-this-agent-was-generated.md](docs/how-this-agent-was-generated.md)
+for a non-technical and technical explanation of how the application was built
+and how it generates answers and reports.
+
 ## Local setup
 
 Requires Node.js 22.13 or later.

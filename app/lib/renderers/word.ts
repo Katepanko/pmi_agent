@@ -5,6 +5,7 @@ import {
   Footer,
   Header,
   HeadingLevel,
+  ImageRun,
   PageNumber,
   Packer,
   Paragraph,
@@ -17,14 +18,15 @@ import {
 } from "docx";
 import type { ConsultingReportItem, ConsultingReportModel } from "../artifact";
 import type { SourceManifestItem } from "../pmi-prompt";
+import { deloitteLogoBytes, DeloitteBrand } from "../branding/deloitte.ts";
 
-const GREEN = "168A55";
-const GREEN_PALE = "EAF7EF";
-const INK = "17201B";
-const BODY = "35423B";
-const MUTED = "69766F";
-const LINE = "D9E1DB";
-const PAPER = "F5F7F5";
+const GREEN = DeloitteBrand.colors.deepGreen;
+const GREEN_PALE = DeloitteBrand.colors.paleGreen;
+const INK = DeloitteBrand.colors.black;
+const BODY = "313131";
+const MUTED = DeloitteBrand.colors.coolGray;
+const LINE = DeloitteBrand.colors.lightGray;
+const PAPER = "F7F7F7";
 function cell(text: string, width: number, options: { header?: boolean; shade?: string; bold?: boolean } = {}) {
   return new TableCell({
     width: { size: width, type: WidthType.PERCENTAGE },
@@ -104,14 +106,17 @@ export async function renderWordDocument(model: ConsultingReportModel, sources: 
   }
 
   const document = new Document({
-    creator: "PMI Agent",
+    creator: DeloitteBrand.name,
     title: model.title,
     subject: model.executiveSummary,
     styles: { default: { document: { run: { font: "Aptos", size: 19, color: BODY }, paragraph: { spacing: { line: 260, after: 100 } } } } },
     sections: [{
       properties: { page: { margin: { top: 900, right: 850, bottom: 850, left: 850 } } },
-      headers: { default: new Header({ children: [new Paragraph({ border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: LINE } }, children: [new TextRun({ text: `${model.title}  |  Confidential`, color: MUTED, size: 15, font: "Aptos" })] })] }) },
-      footers: { default: new Footer({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: "PMI Agent  •  ", color: MUTED, size: 15 }), new TextRun({ children: [PageNumber.CURRENT], color: MUTED, size: 15 })] })] }) },
+      headers: { default: new Header({ children: [
+        new Paragraph({ spacing: { after: 40 }, children: [new ImageRun({ data: deloitteLogoBytes(), transformation: { width: 132, height: 25 }, type: "png" })] }),
+        new Paragraph({ border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: LINE } }, children: [new TextRun({ text: `${model.title}  |  ${DeloitteBrand.footer.confidentiality}`, color: MUTED, size: 15, font: DeloitteBrand.typography.body })] }),
+      ] }) },
+      footers: { default: new Footer({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: `${DeloitteBrand.footer.copyright()}  •  `, color: MUTED, size: 15 }), new TextRun({ children: [PageNumber.CURRENT], color: MUTED, size: 15 })] })] }) },
       children,
     }],
   });

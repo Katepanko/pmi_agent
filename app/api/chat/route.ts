@@ -11,6 +11,8 @@ import {
   type ArtifactContentModel,
   type ArtifactFormat,
 } from "../../lib/artifact";
+import { reconcileEvidence } from "../../lib/evidence";
+import { enforceConflictVisibility } from "../../lib/conflict-guard";
 import { authenticatedUserId, loadLatestArtifact, loadLatestArtifactModel, saveArtifact } from "../../lib/persistence";
 import { getRuntimeBindings } from "../../lib/runtime-bindings";
 
@@ -38,6 +40,9 @@ export async function POST(request: Request) {
 
     const model = requireModel(body.modelKey ?? "openai-gpt56");
     const provider = getProvider(model.provider);
+    const sources = body.sources ?? [];
+    const userStatements = [...(body.history ?? []).filter((entry) => entry.role === "user").map((entry) => entry.content), body.message];
+    const reconciliation = reconcileEvidence(sources, { userStatements, authorityRules: body.sourceRules });
     const userId = authenticatedUserId(request);
     const latest = body.chatId
       ? await loadLatestArtifact(userId, body.chatId).catch(() => null)
@@ -54,9 +59,10 @@ export async function POST(request: Request) {
         request: body.message,
         audience: body.audience ?? "Infer from request",
         projectContext: body.projectContext,
-        sources: body.sources ?? [],
+        sources,
         history: body.history ?? [],
         currentModel: previous?.model as ArtifactContentModel | null | undefined,
+        reconciliation,
       });
       const planned = await provider.generate({
         model,
@@ -64,10 +70,10 @@ export async function POST(request: Request) {
         messages: [{ role: "user", content: body.message }],
         signal: request.signal,
       });
-      const artifactModel = parseArtifactModel(requestedFormat, planned, body.audience ?? "Management");
+      const artifactModel = enforceConflictVisibility(parseArtifactModel(requestedFormat, planned, body.audience ?? "Management"), reconciliation);
       const artifactId = crypto.randomUUID();
       const version = (previous?.version ?? 0) + 1;
-      const rendered = await renderArtifact({ format: requestedFormat, model: artifactModel, version, sources: body.sources ?? [] });
+      const rendered = await renderArtifact({ format: requestedFormat, model: artifactModel, version, sources });
       await validateArtifact(rendered);
       const objectKey = `artifacts/${userId}/${body.chatId}/${artifactId}/${rendered.filename}`;
       const bucket = getRuntimeBindings().FILES;
@@ -122,9 +128,10 @@ export async function POST(request: Request) {
     const system = buildGroundedPrompt({
       projectContext: body.projectContext,
       audience: body.audience,
-      sources: body.sources ?? [],
+      sources,
       sourceRules: body.sourceRules,
       currentDraft: body.currentDraft,
+      reconciliation,
     });
     const stream = await provider.stream({
       model,

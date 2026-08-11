@@ -57,6 +57,8 @@ test("renders valid consulting-quality Excel, Word, PDF, and HTML packages", asy
   assert.ok(excel.sheetCount >= 4);
   assert.ok(excelZip["xl/workbook.xml"]);
   assert.ok(excelZip["xl/worksheets/sheet1.xml"]);
+  assert.ok(Object.keys(excelZip).some((path) => /^xl\/media\/.+\.png$/.test(path)));
+  assert.ok(excelZip["xl/drawings/drawing1.xml"]);
 
   const word = await renderWordDocument(report, sources);
   const wordZip = unzipSync(new Uint8Array(word.bytes));
@@ -64,15 +66,21 @@ test("renders valid consulting-quality Excel, Word, PDF, and HTML packages", asy
   assert.ok(wordZip["word/document.xml"]);
   assert.ok(wordZip["word/header1.xml"]);
   assert.ok(wordZip["word/footer1.xml"]);
+  assert.match(new TextDecoder().decode(wordZip["word/header1.xml"]), /<w:drawing>/);
+  assert.ok(Object.keys(wordZip).some((path) => /^word\/media\/.+\.png$/.test(path)));
 
   const pdf = await renderPdfReport(report, sources);
   const pdfDocument = await PDFDocument.load(pdf.bytes);
   assert.equal(pdfDocument.getPageCount(), pdf.pageCount);
   assert.ok(pdf.pageCount >= 1);
+  assert.match(new TextDecoder("latin1").decode(pdf.bytes), /\/Subtype\s*\/Image/);
 
   const html = renderHtmlDashboard(report, sources);
   assert.match(html, /^<!doctype html>/i);
   assert.match(html, /Executive message/i);
   assert.match(html, /Evidence register/i);
   assert.match(html, /@media print/);
+  assert.match(html, /<img[^>]+alt="Deloitte"/i);
+  assert.match(html, /<img[^>]+src="data:image\/png;base64,/i);
+
 });

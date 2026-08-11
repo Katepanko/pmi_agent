@@ -144,6 +144,19 @@ test("extracts multiple first-message files with compact provenance and coverage
   assert.ok(body.documents.every((document) => document.rawText.length <= 20_000));
 });
 
+test("returns cross-source conflicts during batch extraction", async () => {
+  const form = new FormData();
+  form.append("files", new File(["Metric,Value\nOverall integration progress,78%\n"], "File_A.csv", { type: "text/csv" }));
+  form.append("files", new File(["Metric,Value\nOverall integration progress,66%\n"], "File_B.csv", { type: "text/csv" }));
+  const response = await request("/api/extract", { method: "POST", body: form });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.reconciliation.conflicts.length, 1);
+  assert.equal(body.reconciliation.conflicts[0].resolutionStatus, "unresolved_conflict");
+  assert.equal(body.reconciliation.conflicts[0].selectedValue, undefined);
+  assert.deepEqual(body.reconciliation.conflicts[0].observations.map((item) => item.value.raw), ["78%", "66%"]);
+});
+
 test("keeps nine uploads isolated so one response cannot fail the entire batch", async () => {
   const responses = await Promise.all(Array.from({ length: 9 }, async (_, index) => {
     const form = new FormData();

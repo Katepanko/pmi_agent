@@ -1,3 +1,5 @@
+import { conflictSummary, reconcileEvidence, type EvidenceReconciliation } from "./evidence.ts";
+
 export const PMI_SYSTEM_PROMPT = `You are a senior Post-Merger Integration consultant supporting Integration Management Offices, functional workstreams, CFOs, CEOs, Steering Committees, and Boards.
 
 Synthesize fragmented PMI evidence into decision-ready management reporting. Use top-down, message-led communication. Distinguish source facts, reproducible calculations, AI-generated insights, and AI-generated recommendations. Never invent numbers, owners, dates, status, budgets, or synergy values.
@@ -13,6 +15,7 @@ export type SourceManifestItem = {
   locations?: string[];
   excerpt?: string;
   warnings?: string[];
+  metadata?: Record<string, unknown>;
 };
 
 export function buildGroundedPrompt(input: {
@@ -21,7 +24,9 @@ export function buildGroundedPrompt(input: {
   sources: SourceManifestItem[];
   sourceRules?: string[];
   currentDraft?: string;
+  reconciliation?: EvidenceReconciliation;
 }) {
+  const reconciliation = input.reconciliation ?? reconcileEvidence(input.sources);
   const manifest = input.sources.map((source) => ({
     file_id: source.id,
     file_name: source.fileName,
@@ -37,7 +42,8 @@ export function buildGroundedPrompt(input: {
     `Project context:\n${input.projectContext || "No project context was supplied."}`,
     `Source authority rules:\n${input.sourceRules?.join("\n") || "No user-defined authority rules."}`,
     `Complete applicable source manifest (${manifest.length} sources):\n${JSON.stringify(manifest, null, 2)}`,
+    `Deterministic cross-source reconciliation (must govern the answer):\n${JSON.stringify(conflictSummary(reconciliation), null, 2)}`,
     input.currentDraft ? `Current report draft to revise:\n${input.currentDraft}` : "No current report draft.",
-    "Before responding, verify source coverage, conflicts, gaps, factual support, calculation reproducibility, audience fit, and clear labelling of AI analysis.",
+    "Before responding, verify source coverage, conflicts, gaps, factual support, calculation reproducibility, audience fit, and clear labelling of AI analysis. Never average disagreements unless the user explicitly requests it and averaging is conceptually valid. Continue the requested report while surfacing material unresolved conflicts in the relevant section, with every conflicting value and its provenance; do not present a disputed value as fact.",
   ].join("\n\n");
 }

@@ -1,21 +1,22 @@
 import ExcelJS from "exceljs";
 import type { ConsultingReportModel, ConsultingReportSection } from "../artifact";
 import type { SourceManifestItem } from "../pmi-prompt";
+import { DELOITTE_LOGO_DATA_URI, DeloitteBrand } from "../branding/deloitte.ts";
 
 const COLORS = {
-  ink: "FF111A16",
-  body: "FF334139",
-  muted: "FF6E7A72",
-  white: "FFFFFFFF",
-  green: "FF18A862",
-  greenDark: "FF0B6840",
-  greenPale: "FFEAF7EF",
-  amber: "FFD99016",
+  ink: `FF${DeloitteBrand.colors.black}`,
+  body: "FF313131",
+  muted: `FF${DeloitteBrand.colors.coolGray}`,
+  white: `FF${DeloitteBrand.colors.white}`,
+  green: `FF${DeloitteBrand.colors.brightGreen}`,
+  greenDark: `FF${DeloitteBrand.colors.deepGreen}`,
+  greenPale: `FF${DeloitteBrand.colors.paleGreen}`,
+  amber: `FF${DeloitteBrand.colors.amber}`,
   amberPale: "FFFFF4DE",
-  red: "FFC83C3C",
+  red: `FF${DeloitteBrand.colors.red}`,
   redPale: "FFFDECEC",
-  paper: "FFF6F8F5",
-  line: "FFD9E1DB",
+  paper: "FFF7F7F7",
+  line: `FF${DeloitteBrand.colors.lightGray}`,
 };
 
 function safeSheetName(value: string, used: Set<string>, index: number) {
@@ -31,8 +32,8 @@ function statusLabel(value?: string) {
   return value === "green" ? "ON TRACK" : value === "amber" ? "AT RISK" : value === "red" ? "CRITICAL" : "NOT EVIDENCED";
 }
 
-function styleTitle(sheet: ExcelJS.Worksheet, model: ConsultingReportModel, subtitle: string) {
-  sheet.mergeCells("A1:H2");
+function styleTitle(sheet: ExcelJS.Worksheet, model: ConsultingReportModel, subtitle: string, logoId: number) {
+  sheet.mergeCells("A1:F2");
   const title = sheet.getCell("A1");
   title.value = model.title;
   title.font = { name: "Aptos Display", size: 22, bold: true, color: { argb: COLORS.white } };
@@ -40,6 +41,10 @@ function styleTitle(sheet: ExcelJS.Worksheet, model: ConsultingReportModel, subt
   title.alignment = { vertical: "middle", horizontal: "left" };
   sheet.getRow(1).height = 27;
   sheet.getRow(2).height = 27;
+  sheet.mergeCells("G1:H2");
+  const logoPanel = sheet.getCell("G1");
+  logoPanel.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
+  sheet.addImage(logoId, { tl: { col: 6.18, row: 0.45 }, ext: { width: 142, height: 27 }, editAs: "oneCell" });
   sheet.mergeCells("A3:H3");
   const meta = sheet.getCell("A3");
   meta.value = `${subtitle}  |  ${model.audience}${model.reportingPeriod ? `  |  ${model.reportingPeriod}` : ""}`;
@@ -72,16 +77,16 @@ function addStatusConditionalFormatting(sheet: ExcelJS.Worksheet, range: string)
 function configureSheet(sheet: ExcelJS.Worksheet) {
   sheet.views = [{ showGridLines: false, state: "frozen", ySplit: 6 }];
   sheet.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.35, right: 0.35, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 } };
-  sheet.headerFooter.oddFooter = "&LPMI Agent&CConfidential&RPage &P of &N";
+  sheet.headerFooter.oddFooter = `&L${DeloitteBrand.footer.copyright()}&C${DeloitteBrand.footer.confidentiality}&RPage &P of &N`;
   const widths = [26, 17, 16, 46, 46, 22, 18, 24];
   widths.forEach((width, index) => { sheet.getColumn(index + 1).width = width; });
 }
 
-function addExecutiveSummary(workbook: ExcelJS.Workbook, model: ConsultingReportModel, sections: ConsultingReportSection[]) {
+function addExecutiveSummary(workbook: ExcelJS.Workbook, model: ConsultingReportModel, sections: ConsultingReportSection[], logoId: number) {
   const sheet = workbook.addWorksheet("01 Executive Summary", { properties: { tabColor: { argb: COLORS.green } } });
   configureSheet(sheet);
   sheet.views = [{ showGridLines: false, state: "frozen", ySplit: 11 }];
-  styleTitle(sheet, model, "EXECUTIVE MANAGEMENT VIEW");
+  styleTitle(sheet, model, "EXECUTIVE MANAGEMENT VIEW", logoId);
   sheet.mergeCells("A5:H6");
   const message = sheet.getCell("A5");
   message.value = model.executiveSummary;
@@ -140,10 +145,10 @@ function addExecutiveSummary(workbook: ExcelJS.Workbook, model: ConsultingReport
   return sheet;
 }
 
-function addSectionSheet(workbook: ExcelJS.Workbook, model: ConsultingReportModel, section: ConsultingReportSection, name: string) {
+function addSectionSheet(workbook: ExcelJS.Workbook, model: ConsultingReportModel, section: ConsultingReportSection, name: string, logoId: number) {
   const sheet = workbook.addWorksheet(name, { properties: { tabColor: { argb: section.type === "risks" ? COLORS.red : section.type === "decisions" ? COLORS.amber : COLORS.green } } });
   configureSheet(sheet);
-  styleTitle(sheet, model, section.name.toUpperCase());
+  styleTitle(sheet, model, section.name.toUpperCase(), logoId);
   sheet.mergeCells("A5:H5");
   sheet.getCell("A5").value = section.keyMessage ?? section.title;
   sheet.getCell("A5").font = { name: "Aptos Display", size: 13, bold: true, color: { argb: COLORS.ink } };
@@ -192,11 +197,11 @@ function addSectionSheet(workbook: ExcelJS.Workbook, model: ConsultingReportMode
   return sheet;
 }
 
-function addSourceRegister(workbook: ExcelJS.Workbook, model: ConsultingReportModel, sources: SourceManifestItem[], index: number) {
+function addSourceRegister(workbook: ExcelJS.Workbook, model: ConsultingReportModel, sources: SourceManifestItem[], index: number, logoId: number) {
   if (!sources.length) return;
   const sheet = workbook.addWorksheet(`${String(index).padStart(2, "0")} Source Register`.slice(0, 31), { properties: { tabColor: { argb: COLORS.muted } } });
   configureSheet(sheet);
-  styleTitle(sheet, model, "SOURCE COVERAGE AND LIMITATIONS");
+  styleTitle(sheet, model, "SOURCE COVERAGE AND LIMITATIONS", logoId);
   sheet.mergeCells("A5:H5");
   sheet.getCell("A5").value = "Every applicable source is listed; incomplete extraction remains explicit.";
   sheet.getCell("A5").font = { name: "Aptos Display", size: 13, bold: true, color: { argb: COLORS.ink } };
@@ -218,16 +223,17 @@ function addSourceRegister(workbook: ExcelJS.Workbook, model: ConsultingReportMo
 
 export async function renderExcelWorkbook(model: ConsultingReportModel, sources: SourceManifestItem[]) {
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = "PMI Agent";
-  workbook.company = "PMI Agent";
+  workbook.creator = DeloitteBrand.name;
+  workbook.company = DeloitteBrand.name;
   workbook.title = model.title;
   workbook.subject = model.executiveSummary;
   workbook.created = new Date();
   workbook.calcProperties.fullCalcOnLoad = true;
-  addExecutiveSummary(workbook, model, model.sections);
+  const logoId = workbook.addImage({ base64: DELOITTE_LOGO_DATA_URI, extension: "png" });
+  addExecutiveSummary(workbook, model, model.sections, logoId);
   const used = new Set<string>(["01 Executive Summary"]);
-  model.sections.forEach((section, index) => addSectionSheet(workbook, model, section, safeSheetName(section.name, used, index + 2)));
-  addSourceRegister(workbook, model, sources, model.sections.length + 2);
+  model.sections.forEach((section, index) => addSectionSheet(workbook, model, section, safeSheetName(section.name, used, index + 2), logoId));
+  addSourceRegister(workbook, model, sources, model.sections.length + 2, logoId);
   const buffer = await workbook.xlsx.writeBuffer();
   return { bytes: new Uint8Array(buffer), sheetCount: workbook.worksheets.length };
 }

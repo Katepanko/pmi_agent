@@ -2,6 +2,7 @@ import { extractFile, createCoverageCheck } from "../../lib/ingestion/pipeline";
 import { authenticatedUserId } from "../../lib/persistence";
 import type { ExtractedDocument } from "../../lib/ingestion/types";
 import { getRuntimeBindings } from "../../lib/runtime-bindings";
+import { reconcileEvidence } from "../../lib/evidence";
 
 export const dynamic = "force-dynamic";
 
@@ -57,5 +58,14 @@ export async function POST(request: Request) {
     return { ...compact(document), objectKey };
   }));
   const coverage = createCoverageCheck(documents);
-  return Response.json({ documents, coverage });
+  const reconciliation = reconcileEvidence(documents.map((document) => ({
+    id: document.fileId,
+    fileName: document.fileName,
+    status: document.status,
+    locations: document.structuredElements.map((segment) => segment.location),
+    excerpt: document.rawText.slice(0, MAX_EXCERPT),
+    warnings: document.extractionWarnings,
+    metadata: document.metadata,
+  })));
+  return Response.json({ documents, coverage, reconciliation });
 }

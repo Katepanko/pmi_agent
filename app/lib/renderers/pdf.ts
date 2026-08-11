@@ -1,12 +1,13 @@
 import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb } from "pdf-lib";
 import type { ConsultingReportModel } from "../artifact";
 import type { SourceManifestItem } from "../pmi-prompt";
+import { deloitteLogoBytes, DeloitteBrand } from "../branding/deloitte.ts";
 
 const PAGE = { width: 612, height: 792, left: 48, right: 48, top: 54, bottom: 48 };
 const COLORS = {
-  ink: rgb(0.08, 0.12, 0.10), body: rgb(0.20, 0.26, 0.22), muted: rgb(0.42, 0.48, 0.44),
-  green: rgb(0.08, 0.55, 0.33), greenPale: rgb(0.92, 0.97, 0.94), line: rgb(0.84, 0.88, 0.85), paper: rgb(0.97, 0.98, 0.97),
-  amber: rgb(0.80, 0.49, 0.08), red: rgb(0.72, 0.19, 0.19), white: rgb(1, 1, 1),
+  ink: rgb(0, 0, 0), body: rgb(0.19, 0.19, 0.19), muted: rgb(0.46, 0.47, 0.48),
+  green: rgb(0.02, 0.42, 0.22), greenPale: rgb(0.95, 0.96, 0.89), line: rgb(0.90, 0.90, 0.90), paper: rgb(0.97, 0.97, 0.97),
+  amber: rgb(0.93, 0.55, 0), red: rgb(0.85, 0.16, 0.11), white: rgb(1, 1, 1),
 };
 
 const PDF_ASCII_FALLBACKS: Record<string, string> = {
@@ -47,16 +48,18 @@ function wrap(text: string, font: PDFFont, size: number, maxWidth: number) {
 
 export async function renderPdfReport(model: ConsultingReportModel, sources: SourceManifestItem[]) {
   const doc = await PDFDocument.create();
-  doc.setTitle(model.title); doc.setAuthor("PMI Agent"); doc.setSubject(model.executiveSummary);
+  doc.setTitle(model.title); doc.setAuthor(DeloitteBrand.name); doc.setSubject(model.executiveSummary);
   const regular = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const logo = await doc.embedPng(deloitteLogoBytes());
   let page!: PDFPage;
   let y = 0;
   const pages: PDFPage[] = [];
   const newPage = () => {
-    page = doc.addPage([PAGE.width, PAGE.height]); pages.push(page); y = PAGE.height - PAGE.top;
+    page = doc.addPage([PAGE.width, PAGE.height]); pages.push(page); y = PAGE.height - PAGE.top - 28;
     page.drawRectangle({ x: 0, y: 0, width: 8, height: PAGE.height, color: COLORS.green });
-    page.drawText("PMI MANAGEMENT REPORT", { x: PAGE.left, y, size: 8, font: bold, color: COLORS.green }); y -= 24;
+    page.drawImage(logo, { x: PAGE.left, y: PAGE.height - 43, width: 112, height: 21 });
+    page.drawText("MANAGEMENT REPORT", { x: PAGE.left, y, size: 8, font: bold, color: COLORS.green }); y -= 24;
   };
   const ensure = (height: number) => { if (y - height < PAGE.bottom) newPage(); };
   const drawLines = (text: string, options: { size?: number; font?: PDFFont; color?: ReturnType<typeof rgb>; indent?: number; gap?: number; maxWidth?: number } = {}) => {
@@ -117,9 +120,9 @@ export async function renderPdfReport(model: ConsultingReportModel, sources: Sou
 
   pages.forEach((target, index) => {
     target.drawLine({ start: { x: PAGE.left, y: 31 }, end: { x: PAGE.width - PAGE.right, y: 31 }, thickness: 0.5, color: COLORS.line });
-    target.drawText("PMI Agent  •  Confidential", { x: PAGE.left, y: 18, size: 7.5, font: regular, color: COLORS.muted });
+    target.drawText(`${DeloitteBrand.footer.copyright()}  •  ${DeloitteBrand.footer.confidentiality}`, { x: PAGE.left, y: 18, size: 7.5, font: regular, color: COLORS.muted });
     const count = `${index + 1} / ${pages.length}`;
     target.drawText(count, { x: PAGE.width - PAGE.right - regular.widthOfTextAtSize(count, 7.5), y: 18, size: 7.5, font: regular, color: COLORS.muted });
   });
-  return { bytes: await doc.save(), pageCount: pages.length };
+  return { bytes: await doc.save({ useObjectStreams: false }), pageCount: pages.length };
 }

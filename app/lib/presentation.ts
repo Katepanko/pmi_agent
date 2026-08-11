@@ -1,5 +1,7 @@
 import PptxGenJS from "pptxgenjs";
 import type { SourceManifestItem } from "./pmi-prompt";
+import { applyDeloittePowerPointTemplate, DeloitteBrand, validateDeloittePowerPoint } from "./branding/deloitte.ts";
+import { conflictSummary, reconcileEvidence, type EvidenceReconciliation } from "./evidence.ts";
 
 export const POWERPOINT_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 
@@ -13,7 +15,7 @@ export type PresentationItem = {
   owner?: string;
   deadline?: string;
   status?: PresentationStatus;
-  evidenceType?: "fact" | "calculation" | "inference" | "recommendation" | "gap";
+  evidenceType?: "fact" | "calculation" | "inference" | "recommendation" | "gap" | "conflict";
   sourceRefs?: string[];
 };
 
@@ -29,28 +31,31 @@ export type PresentationSlide = {
 export type PresentationModel = {
   title: string;
   subtitle?: string;
+  projectName?: string;
+  location?: string;
+  date?: string;
   audience: string;
   executiveSummary: string;
   slides: PresentationSlide[];
 };
 
 const STATUS_COLORS: Record<PresentationStatus, string> = {
-  green: "1B8E5A",
-  amber: "D99016",
-  red: "C83C3C",
-  neutral: "748078",
+  green: DeloitteBrand.colors.green,
+  amber: DeloitteBrand.colors.amber,
+  red: DeloitteBrand.colors.red,
+  neutral: DeloitteBrand.colors.coolGray,
 };
 
 const COLORS = {
-  ink: "111A16",
-  body: "334139",
-  muted: "6E7A72",
-  green: "18A862",
-  greenDark: "0B6840",
-  greenPale: "EAF7EF",
-  paper: "F6F8F5",
-  white: "FFFFFF",
-  line: "D9E1DB",
+  ink: DeloitteBrand.colors.black,
+  body: "313131",
+  muted: DeloitteBrand.colors.coolGray,
+  green: DeloitteBrand.colors.brightGreen,
+  greenDark: DeloitteBrand.colors.deepGreen,
+  greenPale: DeloitteBrand.colors.paleGreen,
+  paper: "F7F7F7",
+  white: DeloitteBrand.colors.white,
+  line: DeloitteBrand.colors.lightGray,
   amberPale: "FFF4DE",
   redPale: "FDECEC",
 };
@@ -79,7 +84,9 @@ export function buildPresentationPlanningPrompt(input: {
   sources: SourceManifestItem[];
   history: Array<{ role: "user" | "assistant"; content: string }>;
   currentPresentation?: PresentationModel | null;
+  reconciliation?: EvidenceReconciliation;
 }) {
+  const reconciliation = input.reconciliation ?? reconcileEvidence(input.sources);
   const requestedCount = desiredSlideCount(input.request);
   const manifest = input.sources.map((source) => ({
     id: source.id,
@@ -98,12 +105,16 @@ Evidence discipline:
 - Use sourceRefs with supplied source IDs for factual items.
 - Label recommendations as requiring validation.
 - Surface material uncertainty and incomplete extraction.
+- Treat the deterministic reconciliation below as mandatory. Never select or average an unresolved conflicting value; show every material conflict with all source values and provenance.
 - Keep text concise enough for a management slide: no item detail over 42 words, no slide title over 18 words, and no more than 6 items per slide.
 
 Return ONLY one valid JSON object with this exact shape:
 {
   "title": "file/deck title",
   "subtitle": "optional reporting period or context",
+  "projectName": "optional source-backed project or client name",
+  "location": "optional source-backed location",
+  "date": "optional source-backed presentation date",
   "audience": "audience",
   "executiveSummary": "one-sentence governing thought",
   "slides": [
@@ -120,7 +131,7 @@ Return ONLY one valid JSON object with this exact shape:
         "owner": "optional source-backed owner",
         "deadline": "optional source-backed deadline",
         "status": "green|amber|red|neutral",
-        "evidenceType": "fact|calculation|inference|recommendation|gap",
+        "evidenceType": "fact|calculation|inference|recommendation|gap|conflict",
         "sourceRefs": ["source-id"]
       }],
       "sourceNotes": ["short source or uncertainty note"]
@@ -134,6 +145,7 @@ ${input.currentPresentation ? "This is a revision. Preserve every unaffected sli
 Audience: ${input.audience || "Infer from request"}
 Project context: ${input.projectContext || "No project context supplied."}
 Complete source manifest: ${JSON.stringify(manifest)}
+Deterministic cross-source reconciliation: ${JSON.stringify(conflictSummary(reconciliation))}
 Prior conversation: ${JSON.stringify(input.history.slice(-16))}
 Current presentation: ${input.currentPresentation ? JSON.stringify(input.currentPresentation) : "None"}
 User request: ${input.request}`;
@@ -148,7 +160,7 @@ function status(value: unknown): PresentationStatus {
 }
 
 function evidenceType(value: unknown): PresentationItem["evidenceType"] {
-  return value === "fact" || value === "calculation" || value === "inference" || value === "recommendation" || value === "gap" ? value : "inference";
+  return value === "fact" || value === "calculation" || value === "inference" || value === "recommendation" || value === "gap" || value === "conflict" ? value : "inference";
 }
 
 function parseJsonObject(raw: string) {
@@ -193,6 +205,9 @@ export function parsePresentationModel(raw: string, fallbackAudience: string): P
   return {
     title: text(value.title, "PMI Management Report"),
     subtitle: text(value.subtitle) || undefined,
+    projectName: text(value.projectName) || undefined,
+    location: text(value.location) || undefined,
+    date: text(value.date) || undefined,
     audience: text(value.audience, fallbackAudience || "Management"),
     executiveSummary: text(value.executiveSummary, slides[0].title),
     slides,
@@ -207,18 +222,18 @@ export function presentationFileName(model: PresentationModel, version: number) 
   return `${cleanFilePart(model.title)}${version > 1 ? `_v${version}` : ""}.pptx`;
 }
 
-function addFooter(slide: PptxGenJS.Slide, model: PresentationModel, index: number) {
-  slide.addShape("line", { x: 0.55, y: 7.12, w: 12.25, h: 0, line: { color: COLORS.line, width: 0.7 } });
-  slide.addText(`PMI Agent  ·  ${model.audience}`, { x: 0.58, y: 7.18, w: 5.8, h: 0.16, fontFace: "Aptos", fontSize: 7.5, color: COLORS.muted, margin: 0, charSpacing: 0.4 });
-  slide.addText(String(index + 1).padStart(2, "0"), { x: 12.15, y: 7.16, w: 0.55, h: 0.16, fontFace: "Aptos", fontSize: 8, bold: true, color: COLORS.greenDark, align: "right", margin: 0 });
-}
-
 function addSlideHeader(slide: PptxGenJS.Slide, current: PresentationSlide) {
-  slide.addShape("rect", { x: 0, y: 0, w: 0.16, h: 7.5, line: { color: COLORS.green, transparency: 100 }, fill: { color: COLORS.green } });
-  slide.addText((current.kicker ?? "MANAGEMENT UPDATE").toUpperCase(), { x: 0.65, y: 0.4, w: 11.9, h: 0.2, fontFace: "Aptos", fontSize: 8.5, bold: true, color: COLORS.greenDark, charSpacing: 1.6, margin: 0 });
-  slide.addText(current.title, { x: 0.65, y: 0.7, w: 11.85, h: 0.75, fontFace: "Aptos Display", fontSize: 25, bold: true, color: COLORS.ink, breakLine: false, margin: 0, valign: "mid", fit: "shrink" });
+  const titleLength = current.title.trim().length;
+  const titleFontSize = titleLength <= 60 ? 30 : titleLength <= 100 ? 27 : 24;
+  const titleHeight = titleLength <= 60 ? 0.58 : 0.88;
+  const titleX = 0.55;
+  const titleY = 0.58;
+  const subtitleY = titleY + titleHeight + 0.06;
+
+  slide.addText((current.kicker ?? "MANAGEMENT UPDATE").toUpperCase(), { x: titleX, y: 0.21, w: 11.7, h: 0.2, fontFace: DeloitteBrand.typography.body, fontSize: 8.5, bold: true, color: COLORS.greenDark, charSpacing: 1.6, margin: 0 });
+  slide.addText(current.title, { x: titleX, y: titleY, w: 12.05, h: titleHeight, fontFace: "Aptos Display", fontSize: titleFontSize, bold: true, color: COLORS.ink, breakLine: false, margin: 0, valign: "top", fit: "shrink" });
   if (current.keyMessage) {
-    slide.addText(current.keyMessage, { x: 0.66, y: 1.49, w: 11.35, h: 0.4, fontFace: "Aptos", fontSize: 11, color: COLORS.body, margin: 0, fit: "shrink" });
+    slide.addText(current.keyMessage, { x: titleX, y: subtitleY, w: 11.7, h: 0.34, fontFace: "Aptos", fontSize: 11.5, color: COLORS.body, margin: 0, valign: "top", fit: "shrink" });
   }
 }
 
@@ -297,23 +312,28 @@ function addSourceNotes(slide: PptxGenJS.Slide, notes: string[] | undefined) {
   slide.addText(`Sources / caveats: ${notes.join("  ·  ")}`, { x: 0.66, y: 6.78, w: 11.35, h: 0.2, fontFace: "Aptos", fontSize: 6.6, italic: true, color: COLORS.muted, margin: 0, fit: "shrink" });
 }
 
-function addCover(slide: PptxGenJS.Slide, model: PresentationModel, current: PresentationSlide, index: number) {
+function addCover(slide: PptxGenJS.Slide, model: PresentationModel, current: PresentationSlide) {
   slide.background = { color: COLORS.ink };
-  slide.addShape("rect", { x: 0, y: 0, w: 0.18, h: 7.5, line: { color: COLORS.green, transparency: 100 }, fill: { color: COLORS.green } });
   slide.addText((current.kicker ?? model.audience).toUpperCase(), { x: 0.82, y: 0.75, w: 10.8, h: 0.25, fontFace: "Aptos", fontSize: 9.5, bold: true, color: "82D9AA", charSpacing: 1.8, margin: 0 });
   slide.addText(current.title || model.title, { x: 0.82, y: 1.35, w: 10.9, h: 1.75, fontFace: "Aptos Display", fontSize: 32, bold: true, color: COLORS.white, margin: 0, valign: "mid", fit: "shrink" });
   slide.addText(current.keyMessage ?? model.executiveSummary, { x: 0.84, y: 3.35, w: 9.55, h: 0.9, fontFace: "Aptos", fontSize: 15, color: "DDE6E0", margin: 0, fit: "shrink" });
   slide.addShape("line", { x: 0.84, y: 5.65, w: 2.25, h: 0, line: { color: COLORS.green, width: 3 } });
   slide.addText(model.subtitle ?? "Decision-ready integration reporting", { x: 0.84, y: 5.82, w: 7.8, h: 0.3, fontFace: "Aptos", fontSize: 10, color: "AFC0B5", margin: 0 });
   slide.addText(`PMI Agent  ·  ${model.audience}`, { x: 0.84, y: 6.92, w: 5.5, h: 0.18, fontFace: "Aptos", fontSize: 7.5, color: "8FA096", charSpacing: 0.4, margin: 0 });
-  slide.addText(String(index + 1).padStart(2, "0"), { x: 12.1, y: 6.9, w: 0.55, h: 0.18, fontFace: "Aptos", fontSize: 8, bold: true, color: "82D9AA", align: "right", margin: 0 });
 }
 
 export async function renderPresentation(model: PresentationModel) {
+  const slides = model.slides[0]?.layout === "cover" ? model.slides : [{
+    title: model.title,
+    keyMessage: model.executiveSummary,
+    layout: "cover" as const,
+    items: [],
+    sourceNotes: [],
+  }, ...model.slides];
   const pptx = new PptxGenJS();
   pptx.layout = "LAYOUT_WIDE";
-  pptx.author = "PMI Agent";
-  pptx.company = "PMI Agent";
+  pptx.author = DeloitteBrand.name;
+  pptx.company = DeloitteBrand.name;
   pptx.subject = model.executiveSummary;
   pptx.title = model.title;
   pptx.lang = "en-US";
@@ -326,13 +346,12 @@ export async function renderPresentation(model: PresentationModel) {
     title: "PMI_CONSULTING",
     background: { color: COLORS.white },
     objects: [],
-    slideNumber: { x: 12.1, y: 7.15, w: 0.55, h: 0.15, color: COLORS.muted, fontFace: "Aptos", fontSize: 7.5, align: "right", margin: 0 },
   });
 
-  model.slides.forEach((current, index) => {
+  slides.forEach((current) => {
     const slide = pptx.addSlide({ masterName: "PMI_CONSULTING" });
     if (current.layout === "cover") {
-      addCover(slide, model, current, index);
+      addCover(slide, model, current);
       slide.addNotes(`[Sources]\n${current.sourceNotes?.length ? current.sourceNotes.map((note) => `- ${note}`).join("\n") : "- No external claim on this cover slide."}`);
       return;
     }
@@ -341,15 +360,34 @@ export async function renderPresentation(model: PresentationModel) {
     else if (current.layout === "trajectory" || current.layout === "timeline") addTrajectory(slide, current);
     else addCards(slide, current);
     addSourceNotes(slide, current.sourceNotes);
-    addFooter(slide, model, index);
     const sourceIds = [...new Set(current.items.flatMap((item) => item.sourceRefs ?? []))];
     const notes = [...sourceIds.map((id) => `Source ID: ${id}`), ...(current.sourceNotes ?? [])];
     slide.addNotes(`[Sources]\n${notes.length ? notes.map((note) => `- ${note}`).join("\n") : "- No source reference supplied; validate claims before circulation."}`);
   });
 
   const result = await pptx.write({ outputType: "uint8array", compression: true });
-  if (result instanceof Uint8Array) return result;
-  if (result instanceof ArrayBuffer) return new Uint8Array(result);
-  if (result instanceof Blob) return new Uint8Array(await result.arrayBuffer());
-  throw new Error("The PowerPoint renderer returned an unsupported output type.");
+  const generated = result instanceof Uint8Array
+    ? result
+    : result instanceof ArrayBuffer
+      ? new Uint8Array(result)
+      : result instanceof Blob
+        ? new Uint8Array(await result.arrayBuffer())
+        : null;
+  if (!generated) throw new Error("The PowerPoint renderer returned an unsupported output type.");
+  const branded = applyDeloittePowerPointTemplate({
+    generated,
+    title: model.title,
+    subtitle: model.subtitle,
+    projectName: model.projectName,
+    location: model.location,
+    date: model.date,
+    audience: model.audience,
+    slideCount: slides.length,
+  });
+  validateDeloittePowerPoint(branded, {
+    title: model.title,
+    slideCount: slides.length,
+    metadata: [model.projectName, model.subtitle, model.audience, model.location, model.date].filter((value): value is string => Boolean(value)),
+  });
+  return branded;
 }

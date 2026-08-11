@@ -1,6 +1,7 @@
 import { unzipSync } from "fflate";
 import { PDFDocument } from "pdf-lib";
 import type { SourceManifestItem } from "./pmi-prompt";
+import { conflictSummary, reconcileEvidence, type EvidenceReconciliation } from "./evidence.ts";
 import {
   buildPresentationPlanningPrompt,
   parsePresentationModel,
@@ -15,6 +16,7 @@ import { renderWordDocument } from "./renderers/word";
 import { renderPdfReport } from "./renderers/pdf";
 import { renderHtmlDashboard } from "./renderers/html";
 import type { ArtifactFormat } from "./artifact-intent";
+import { DeloitteBrand } from "./branding/deloitte";
 
 export { detectArtifactRequest, type ArtifactFormat } from "./artifact-intent";
 
@@ -27,7 +29,7 @@ export type ConsultingReportItem = {
   owner?: string;
   deadline?: string;
   status?: PresentationStatus;
-  evidenceType?: "fact" | "calculation" | "inference" | "recommendation" | "gap";
+  evidenceType?: "fact" | "calculation" | "inference" | "recommendation" | "gap" | "conflict";
   sourceRefs?: string[];
 };
 
@@ -77,7 +79,7 @@ function status(value: unknown): PresentationStatus {
 }
 
 function evidenceType(value: unknown): ConsultingReportItem["evidenceType"] {
-  return value === "fact" || value === "calculation" || value === "inference" || value === "recommendation" || value === "gap" ? value : "inference";
+  return value === "fact" || value === "calculation" || value === "inference" || value === "recommendation" || value === "gap" || value === "conflict" ? value : "inference";
 }
 
 function parseJsonObject(raw: string) {
@@ -139,7 +141,9 @@ export function buildConsultingArtifactPrompt(input: {
   sources: SourceManifestItem[];
   history: Array<{ role: "user" | "assistant"; content: string }>;
   currentModel?: ConsultingReportModel | null;
+  reconciliation?: EvidenceReconciliation;
 }) {
+  const reconciliation = input.reconciliation ?? reconcileEvidence(input.sources);
   const formatPurpose: Record<Exclude<ArtifactFormat, "pptx">, string> = {
     xlsx: "a management workbook with dynamically chosen sheets, a first-sheet executive view, auditable detail, filters, frozen headers, semantic status formatting, and formulas only where evidence supports them",
     docx: "a skimmable executive document with a professional title block, conclusion-led headings, management callouts, real tables where comparison is useful, headers, footers, page numbers, and source notes",
@@ -163,6 +167,7 @@ Evidence discipline:
 - Use sourceRefs with supplied source IDs for factual items.
 - State "Not evidenced" for material missing information.
 - Preserve extraction warnings, conflicts, and source limitations.
+- Treat the deterministic reconciliation below as mandatory. Do not select or average an unresolved conflicting value. Include every material conflict naturally in the relevant management section with values and provenance.
 - Recommendations must be supportable and require validation.
 - Keep item text concise; avoid walls of text and raw dumps.
 
@@ -187,7 +192,7 @@ Return ONLY one valid JSON object with this shape:
       "owner": "optional source-backed owner",
       "deadline": "optional source-backed deadline",
       "status": "green|amber|red|neutral",
-      "evidenceType": "fact|calculation|inference|recommendation|gap",
+      "evidenceType": "fact|calculation|inference|recommendation|gap|conflict",
       "sourceRefs": ["source-id"]
     }],
     "sourceNotes": ["short evidence limitation or source note"]
@@ -200,6 +205,7 @@ Format: ${input.format}
 Audience: ${input.audience || "Infer from request"}
 Project context: ${input.projectContext || "No project context supplied."}
 Complete source manifest: ${JSON.stringify(manifest)}
+Deterministic cross-source reconciliation: ${JSON.stringify(conflictSummary(reconciliation))}
 Prior conversation: ${JSON.stringify(input.history.slice(-16))}
 Current artifact model: ${input.currentModel ? JSON.stringify(input.currentModel) : "None"}
 User request: ${input.request}`;
@@ -253,11 +259,14 @@ export async function validateArtifact(artifact: RenderedArtifact) {
   if (artifact.format === "pdf") {
     const document = await PDFDocument.load(artifact.bytes);
     if (document.getPageCount() < 1) throw new Error("The generated PDF has no pages.");
+    const pdfText = new TextDecoder("latin1").decode(artifact.bytes);
+    if (!/\/Subtype\s*\/Image/.test(pdfText) || document.getAuthor() !== DeloitteBrand.name) throw new Error("The generated PDF is missing Deloitte branding.");
     return;
   }
   if (artifact.format === "html") {
     const html = new TextDecoder().decode(artifact.bytes);
     if (!/<!doctype html>/i.test(html) || !/<html[\s>]/i.test(html) || !/<\/html>/i.test(html)) throw new Error("The generated HTML document is invalid.");
+    if (!/<img[^>]+alt="Deloitte"/i.test(html) || !/<img[^>]+src="data:image\/png;base64,/i.test(html)) throw new Error("The generated HTML is missing the embedded Deloitte logo.");
     return;
   }
   const files = unzipSync(artifact.bytes);
@@ -267,6 +276,13 @@ export async function validateArtifact(artifact: RenderedArtifact) {
       ? ["[Content_Types].xml", "xl/workbook.xml", "xl/worksheets/sheet1.xml"]
       : ["[Content_Types].xml", "word/document.xml"];
   for (const path of required) if (!files[path]) throw new Error(`The generated ${artifact.format.toUpperCase()} package is missing ${path}.`);
+  if (artifact.format === "docx") {
+    const header = Object.entries(files).filter(([path]) => /^word\/header\d+\.xml$/.test(path)).map(([, bytes]) => new TextDecoder().decode(bytes)).join("\n");
+    if (!/<w:drawing>/i.test(header) || !Object.keys(files).some((path) => /^word\/media\/.+\.png$/i.test(path))) throw new Error("The generated Word document is missing the Deloitte header logo.");
+  }
+  if (artifact.format === "xlsx") {
+    if (!Object.keys(files).some((path) => /^xl\/media\/.+\.png$/i.test(path)) || !files["xl/drawings/drawing1.xml"]) throw new Error("The generated Excel workbook is missing Deloitte branding on the executive sheet.");
+  }
 }
 
 export function planArtifact(input: {
@@ -277,6 +293,7 @@ export function planArtifact(input: {
   sources: SourceManifestItem[];
   history: Array<{ role: "user" | "assistant"; content: string }>;
   currentModel?: ArtifactContentModel | null;
+  reconciliation?: EvidenceReconciliation;
 }) {
   if (input.format === "pptx") {
     return buildPresentationPlanningPrompt({ ...input, currentPresentation: input.currentModel as PresentationModel | null | undefined });

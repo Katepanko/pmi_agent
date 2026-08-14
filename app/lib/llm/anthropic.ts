@@ -1,5 +1,6 @@
 import type { GenerationRequest, LLMProvider } from "./provider";
 import { mapServerSentEvents } from "./provider";
+import { anthropicStructuredOutputRequest, extractAnthropicResponse, type AnthropicContentPart } from "./anthropic-structured-output";
 
 export class AnthropicProvider implements LLMProvider {
   constructor(private readonly apiKey: string) {}
@@ -7,11 +8,17 @@ export class AnthropicProvider implements LLMProvider {
   async generate(request: GenerationRequest) {
     const response = await this.request(request, false);
     const payload = (await response.json()) as {
-      content?: Array<{ type: string; text?: string }>;
+      content?: AnthropicContentPart[];
       error?: { message?: string };
     };
     if (!response.ok) throw new Error(payload.error?.message ?? "Anthropic request failed.");
-    return payload.content?.filter((part) => part.type === "text").map((part) => part.text ?? "").join("") ?? "";
+    const output = extractAnthropicResponse(payload.content, request.structuredOutput?.name);
+    if (!output.trim()) {
+      throw new Error(request.structuredOutput
+        ? "Anthropic did not return the required structured artifact model."
+        : "Anthropic returned no text output.");
+    }
+    return output;
   }
 
   async stream(request: GenerationRequest) {
@@ -35,7 +42,8 @@ export class AnthropicProvider implements LLMProvider {
         model: request.model.modelId,
         system: request.system,
         messages: request.messages,
-        max_tokens: 8_000,
+        max_tokens: request.structuredOutput ? 12_000 : 8_000,
+        ...anthropicStructuredOutputRequest(request.structuredOutput),
         stream,
       }),
       signal: request.signal,

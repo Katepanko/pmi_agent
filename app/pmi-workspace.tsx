@@ -198,10 +198,12 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
     requestAnimationFrame(() => conversationRef.current?.scrollTo({ top: conversationRef.current.scrollHeight, behavior: "smooth" }));
   };
 
-  const updateActiveChat = (updater: (chat: Chat) => Chat) => {
+  const updateChat = (chatId: string, updater: (chat: Chat) => Chat) => {
     setWorkspaceDirty(true);
-    setChats((current) => current.map((chat) => (chat.id === activeChatId ? updater(chat) : chat)));
+    setChats((current) => current.map((chat) => (chat.id === chatId ? updater(chat) : chat)));
   };
+
+  const updateActiveChat = (updater: (chat: Chat) => Chat) => updateChat(activeChatId, updater);
 
   const addFiles = async (files: File[]) => {
     const supported = ["xlsx", "xls", "csv", "pptx", "docx", "pdf", "html", "htm", "png", "jpg", "jpeg"];
@@ -288,10 +290,11 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
       createdAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       attachments: queuedFiles,
     };
+    const submittedChatId = activeChat.id;
     const assistantId = uid("message");
     const combinedSources = [...activeChat.sources, ...queuedFiles];
     const history = activeChat.messages.map(({ role, content }) => ({ role, content }));
-    updateActiveChat((chat) => ({
+    updateChat(submittedChatId, (chat) => ({
       ...chat,
       modelKey: selectedModel,
       messages: [...chat.messages, userMessage, { id: assistantId, role: "assistant", content: "", createdAt: "Now" }],
@@ -318,7 +321,7 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
           audience: activeChat.audience,
           projectContext: activeProject?.context,
           projectId: activeProject?.id ?? null,
-          chatId: activeChat.id,
+          chatId: submittedChatId,
           chatTitle: activeChat.title,
           assistantMessageId: assistantId,
           sources: combinedSources.map((source) => ({
@@ -340,7 +343,7 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
       if (contentType.includes("application/json")) {
         const payload = (await response.json()) as { kind?: string; message?: string; artifact?: Message["artifact"]; error?: string };
         if (payload.kind !== "artifact" || !payload.message || !payload.artifact) throw new Error(payload.error ?? "The artifact response was incomplete.");
-        updateActiveChat((chat) => ({
+        updateChat(submittedChatId, (chat) => ({
           ...chat,
           messages: chat.messages.map((message) => message.id === assistantId
             ? { ...message, content: payload.message!, artifact: payload.artifact }
@@ -356,7 +359,7 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
         const { done, value } = await reader.read();
         if (done) break;
         const token = decoder.decode(value, { stream: true });
-        updateActiveChat((chat) => ({
+        updateChat(submittedChatId, (chat) => ({
           ...chat,
           messages: chat.messages.map((message) =>
             message.id === assistantId ? { ...message, content: message.content + token } : message,
@@ -367,12 +370,12 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
     } catch (error) {
       if ((error as Error).name !== "AbortError") {
         const detail = error instanceof Error ? error.message : "Generation failed.";
-        const connectionIssue = /(?:API_KEY|_MODEL\b|provider key|authentication|unauthorized|could not be reached|connection)/i.test(detail);
+        const connectionIssue = /(?:API_KEY|_MODEL\b|provider key|authentication|unauthorized|could not be reached|connection|credit balance|billing|purchase credits|quota|rate limit|overloaded)/i.test(detail);
         const fileRequest = /\b(?:power\s*point|pptx?|presentation|slide\s*deck|deck|slides?|excel|xlsx|spreadsheet|workbook|word|docx|document|pdf|html|dashboard)\b/i.test(userMessage.content);
         const errorContent = connectionIssue
-          ? `Model connection required\n\n${detail}\n\nAdd the provider key and configured model ID to the server environment. Uploaded files and project context remain in this chat.`
+          ? `Model provider unavailable\n\n${detail}\n\nCheck the provider credentials, billing or credits, configured model ID, and model access. Uploaded files and project context remain in this chat.`
           : `${fileRequest ? "File generation failed" : "Generation failed"}\n\n${detail}\n\nYour report text, uploaded files, and project context remain available. Retry the request; no artifact was stored.`;
-        updateActiveChat((chat) => ({
+        updateChat(submittedChatId, (chat) => ({
           ...chat,
           messages: chat.messages.map((message) =>
             message.id === assistantId

@@ -15,6 +15,8 @@ import { reconcileEvidence } from "../../lib/evidence";
 import { enforceConflictVisibility } from "../../lib/conflict-guard";
 import { authenticatedUserId, loadLatestArtifact, loadLatestArtifactModel, saveArtifact } from "../../lib/persistence";
 import { getRuntimeBindings } from "../../lib/runtime-bindings";
+import { generateStructuredModel } from "../../lib/structured-generation";
+import { artifactStructuredOutput } from "../../lib/artifact-schema";
 
 export const dynamic = "force-dynamic";
 
@@ -64,13 +66,16 @@ export async function POST(request: Request) {
         currentModel: previous?.model as ArtifactContentModel | null | undefined,
         reconciliation,
       });
-      const planned = await provider.generate({
+      const artifactModel = enforceConflictVisibility(await generateStructuredModel({
+        provider,
         model,
         system: planningPrompt,
-        messages: [{ role: "user", content: body.message }],
+        userMessage: body.message,
+        structuredOutput: artifactStructuredOutput(requestedFormat),
+        parse: (raw) => parseArtifactModel(requestedFormat, raw, body.audience ?? "Management"),
+        outputLabel: `${requestedFormat.toUpperCase()} content model`,
         signal: request.signal,
-      });
-      const artifactModel = enforceConflictVisibility(parseArtifactModel(requestedFormat, planned, body.audience ?? "Management"), reconciliation);
+      }), reconciliation);
       const artifactId = crypto.randomUUID();
       const version = (previous?.version ?? 0) + 1;
       const rendered = await renderArtifact({ format: requestedFormat, model: artifactModel, version, sources });

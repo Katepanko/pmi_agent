@@ -1,6 +1,7 @@
 "use client";
 
 import { DragEvent, FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
+import { messageMentionsTemplate, templateMention } from "./lib/template";
 
 type ModelOption = {
   key: string;
@@ -18,6 +19,8 @@ type Attachment = {
   status: "extracted" | "partial" | "pending" | "failed";
   excerpt?: string;
   warnings?: string[];
+  metadata?: Record<string, unknown>;
+  template?: boolean;
 };
 
 type ArtifactFormat = "pptx" | "xlsx" | "docx" | "pdf" | "html";
@@ -234,13 +237,13 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
         form.append("fileId", attachment.id);
         const response = await fetch("/api/extract", { method: "POST", body: form });
         const payload = (await response.json()) as {
-          documents?: Array<{ fileId: string; status: Attachment["status"]; rawText: string; extractionWarnings: string[] }>;
+          documents?: Array<{ fileId: string; status: Attachment["status"]; rawText: string; extractionWarnings: string[]; metadata?: Record<string, unknown> }>;
           error?: string;
         };
         const document = payload.documents?.[0];
         if (!response.ok || !document) throw new Error(payload.error ?? "Extraction service unavailable.");
         setQueuedFiles((current) => current.map((queued) => queued.id === attachment.id
-          ? { ...queued, status: document.status, excerpt: document.rawText, warnings: document.extractionWarnings }
+          ? { ...queued, status: document.status, excerpt: document.rawText, warnings: document.extractionWarnings, metadata: document.metadata }
           : queued));
       } catch (error) {
         const warning = error instanceof Error ? error.message : "Extraction service unavailable.";
@@ -283,12 +286,13 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
     const messageText = composer.trim();
     if ((!messageText && queuedFiles.length === 0) || isGenerating) return;
 
+    const submittedAttachments = queuedFiles.map((file) => ({ ...file, template: messageMentionsTemplate(messageText, file.name) }));
     const userMessage: Message = {
       id: uid("message"),
       role: "user",
       content: messageText || "Please review the attached files.",
       createdAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-      attachments: queuedFiles,
+      attachments: submittedAttachments,
     };
     const submittedChatId = activeChat.id;
     const assistantId = uid("message");
@@ -327,8 +331,10 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
           sources: combinedSources.map((source) => ({
             id: source.id,
             fileName: source.name,
+            fileType: source.type,
             status: source.status,
             excerpt: source.excerpt,
+            metadata: source.metadata,
             warnings: source.warnings ?? (source.status === "pending" ? ["Binary extraction is queued; coverage is not yet complete."] : []),
           })),
         }),
@@ -609,10 +615,20 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
               {queuedFiles.length > 0 && (
                 <div className="queued-files">
                   {queuedFiles.map((file) => (
-                    <div className="queued-file" key={file.id}>
+                    <div className={`queued-file ${messageMentionsTemplate(composer, file.name) ? "is-template" : ""}`} key={file.id}>
                       <span className={`file-glyph ${file.type}`}>{fileGlyph(file.type)}</span>
-                      <span><strong>{file.name}</strong><small>{fileSize(file.size)}</small></span>
-                      <button type="button" onClick={() => setQueuedFiles((current) => current.filter((item) => item.id !== file.id))} aria-label={`Remove ${file.name}`}>×</button>
+                      <span><strong>{file.name}</strong><small>{messageMentionsTemplate(composer, file.name) ? "Template" : fileSize(file.size)}</small></span>
+                      <button
+                        type="button"
+                        className="template-file-button"
+                        onClick={() => {
+                          const mention = templateMention(file.name);
+                          setComposer((current) => current.includes(mention) ? current : `${current}${current && !/\s$/.test(current) ? " " : ""}${mention} `);
+                          requestAnimationFrame(() => { textAreaRef.current?.focus(); resizeComposer(); });
+                        }}
+                        aria-label={`Use ${file.name} as template`}
+                      >@</button>
+                      <button type="button" className="remove-file-button" onClick={() => setQueuedFiles((current) => current.filter((item) => item.id !== file.id))} aria-label={`Remove ${file.name}`}>×</button>
                     </div>
                   ))}
                 </div>
@@ -722,7 +738,7 @@ function MessageView({ message, generating }: { message: Message; generating: bo
               <div className="message-file" key={file.id}>
                 <span className={`file-glyph ${file.type}`}>{fileGlyph(file.type)}</span>
                 <span><strong>{file.name}</strong><small>{file.type.toUpperCase()} · {fileSize(file.size)}</small></span>
-                <span className={`file-status ${file.status}`}>{file.status === "extracted" ? "Indexed" : file.status === "pending" ? "Queued" : file.status}</span>
+                <span className={`file-status ${file.status}`}>{file.template ? "Template" : file.status === "extracted" ? "Indexed" : file.status === "pending" ? "Queued" : file.status}</span>
               </div>
             ))}
           </div>

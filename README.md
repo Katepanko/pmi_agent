@@ -23,6 +23,7 @@ The current vertical slice includes:
 - version-ready knowledge, authority-rule, draft, draft-version, provenance, and
   model-usage schema;
 - explicit PowerPoint intent and revision handling with a structured, LLM-owned storyline model;
+- optional `@filename` template selection that separates template content from deal evidence, preflights semantic layout/capacity, fills PPTX, XLSX, DOCX, PDF, and HTML outputs, accepts image/CSV references, and leaves ordinary no-template prompts unchanged;
 - server-side consulting-style PPTX rendering, R2 storage, D1 artifact metadata, and per-message downloads;
 - responsive black, green, and white consulting-chat interface.
 
@@ -32,6 +33,24 @@ audit and staged gap map.
 See [docs/how-this-agent-was-generated.md](docs/how-this-agent-was-generated.md)
 for a non-technical and technical explanation of how the application was built
 and how it generates answers and reports.
+
+## Using a report template
+
+Attach the template and the PMI evidence files in the same chat. Click the `@`
+button on the template attachment (or type its exact `@filename`) and ask for
+the new report, for example: `Using @Nike_adidas_PMI_Executive_Status.pptx,
+create the same report for our PMI deal.` The marked file controls the report
+structure and is excluded from deal evidence; every other attachment remains an
+evidence source. Prompts without an `@filename` continue to use the standard
+artifact workflow.
+
+Template generation is structure-first: the server inspects the selected file
+before asking the model for content, maps evidence into inherited semantic
+regions, splits content when capacity is exceeded, and validates the resulting
+package. PowerPoint generation reuses and duplicates source slides without
+adding overlay text boxes. Excel formulas and fixed labels are preserved. Flat
+PDFs without form fields are rebuilt on clean pages at the template's page size
+because their original content has no safe editable slots.
 
 ## Local setup
 
@@ -78,7 +97,8 @@ persistence foundation. The next production phases are:
 - hierarchical retrieval over large corpora and deterministic conflict
   normalization;
 - full knowledge-version and source-priority-rule services;
-- editable XLSX/DOCX/PDF renderers and configured corporate-template ingestion;
+- richer visual inference for image templates and non-fillable PDF artwork;
+- native template editing for legacy `.xls` files (convert them to `.xlsx` today);
 - authentication policy, enterprise tenancy, malware scanning, retention,
   observability, and provider cost estimation.
 

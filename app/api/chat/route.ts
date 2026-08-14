@@ -17,6 +17,9 @@ import { authenticatedUserId, loadLatestArtifact, loadLatestArtifactModel, saveA
 import { getRuntimeBindings } from "../../lib/runtime-bindings";
 import { generateStructuredModel } from "../../lib/structured-generation";
 import { artifactStructuredOutput } from "../../lib/artifact-schema";
+import { hasUnresolvedTemplateDirective, resolveTemplateReference, templateOutputFormat } from "../../lib/template";
+import { analyzePresentationTemplate } from "../../lib/presentation-template";
+import { analyzeReportTemplate } from "../../lib/report-template";
 
 export const dynamic = "force-dynamic";
 
@@ -43,13 +46,28 @@ export async function POST(request: Request) {
     const model = requireModel(body.modelKey ?? "openai-gpt56");
     const provider = getProvider(model.provider);
     const sources = body.sources ?? [];
+    const selectedTemplate = resolveTemplateReference(body.message, sources);
+    if (!selectedTemplate && hasUnresolvedTemplateDirective(body.message)) {
+      throw new Error("No uploaded file matches the @template reference. Attach the template, then use its @ button or type its exact filename.");
+    }
+    const evidenceSources = selectedTemplate ? sources.filter((source) => source.id !== selectedTemplate.sourceId) : sources;
     const userStatements = [...(body.history ?? []).filter((entry) => entry.role === "user").map((entry) => entry.content), body.message];
-    const reconciliation = reconcileEvidence(sources, { userStatements, authorityRules: body.sourceRules });
+    const reconciliation = reconcileEvidence(evidenceSources, { userStatements, authorityRules: body.sourceRules });
     const userId = authenticatedUserId(request);
+    if (selectedTemplate) {
+      const templateObject = await getRuntimeBindings().FILES?.get(`staged/${userId}/${selectedTemplate.sourceId}`);
+      if (!templateObject) throw new Error(`The selected template ${selectedTemplate.fileName} is no longer available. Re-attach it and retry.`);
+      selectedTemplate.bytes = new Uint8Array(await templateObject.arrayBuffer());
+      if (selectedTemplate.fileType === "pptx") {
+        selectedTemplate.layoutModel = analyzePresentationTemplate(selectedTemplate.bytes) as unknown as Record<string, unknown>;
+      } else {
+        selectedTemplate.layoutModel = await analyzeReportTemplate(selectedTemplate.bytes, selectedTemplate.fileType);
+      }
+    }
     const latest = body.chatId
       ? await loadLatestArtifact(userId, body.chatId).catch(() => null)
       : null;
-    const requestedFormat = detectArtifactRequest(body.message, latest?.format);
+    const requestedFormat = detectArtifactRequest(body.message, latest?.format) ?? (selectedTemplate ? templateOutputFormat(selectedTemplate) : null);
 
     if (requestedFormat) {
       if (!body.chatId || !body.assistantMessageId) {
@@ -61,10 +79,11 @@ export async function POST(request: Request) {
         request: body.message,
         audience: body.audience ?? "Infer from request",
         projectContext: body.projectContext,
-        sources,
+        sources: evidenceSources,
         history: body.history ?? [],
         currentModel: previous?.model as ArtifactContentModel | null | undefined,
         reconciliation,
+        template: selectedTemplate,
       });
       const artifactModel = enforceConflictVisibility(await generateStructuredModel({
         provider,
@@ -78,8 +97,8 @@ export async function POST(request: Request) {
       }), reconciliation);
       const artifactId = crypto.randomUUID();
       const version = (previous?.version ?? 0) + 1;
-      const rendered = await renderArtifact({ format: requestedFormat, model: artifactModel, version, sources });
-      await validateArtifact(rendered);
+      const rendered = await renderArtifact({ format: requestedFormat, model: artifactModel, version, sources: evidenceSources, template: selectedTemplate });
+      await validateArtifact(rendered, selectedTemplate);
       const objectKey = `artifacts/${userId}/${body.chatId}/${artifactId}/${rendered.filename}`;
       const bucket = getRuntimeBindings().FILES;
       if (!bucket) throw new Error("Artifact storage is unavailable: the FILES binding is not configured.");
@@ -91,7 +110,7 @@ export async function POST(request: Request) {
         pptx: "PowerPoint presentation", xlsx: "Excel workbook", docx: "Word document", pdf: "PDF report", html: "HTML dashboard",
       };
       const audience = "audience" in artifactModel ? artifactModel.audience : body.audience ?? "Management";
-      const responseText = `${version > 1 ? "I updated" : "I created"} the ${artifactTitle(artifactModel)} ${formatName[requestedFormat]} with ${rendered.unitCount} ${rendered.unitLabel} for ${audience}.`;
+      const responseText = `${version > 1 ? "I updated" : "I created"} the ${artifactTitle(artifactModel)} ${formatName[requestedFormat]} with ${rendered.unitCount} ${rendered.unitLabel} for ${audience}${selectedTemplate ? `, using ${selectedTemplate.fileName} as the template` : ""}.`;
       await saveArtifact({
         userId,
         chatId: body.chatId,
@@ -133,7 +152,7 @@ export async function POST(request: Request) {
     const system = buildGroundedPrompt({
       projectContext: body.projectContext,
       audience: body.audience,
-      sources,
+      sources: evidenceSources,
       sourceRules: body.sourceRules,
       currentDraft: body.currentDraft,
       reconciliation,

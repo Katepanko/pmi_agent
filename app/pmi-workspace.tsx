@@ -1,6 +1,7 @@
 "use client";
 
 import { DragEvent, FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
+import { AssistantMarkdown } from "./assistant-markdown";
 import { messageMentionsTemplate, templateMention } from "./lib/template";
 
 type ModelOption = {
@@ -755,7 +756,10 @@ function MessageView({ message, generating }: { message: Message; generating: bo
       <div className="assistant-body">
         <div className="assistant-meta"><strong>PMI Agent</strong><span>PMI consultant</span><time>{message.createdAt}</time></div>
         {message.variant === "demo-report" ? <DemoReport /> : (
-          <div className="streamed-content">{message.content}{generating && <span className="typing-cursor" />}</div>
+          <div className="streamed-content">
+            <AssistantMarkdown content={message.content} />
+            {generating && <span className="typing-cursor" />}
+          </div>
         )}
         {message.artifact && <ArtifactAttachment artifact={message.artifact} />}
         {!generating && message.content && message.variant !== "error" && (

@@ -10,6 +10,7 @@
 !.yarn/releases
 !.yarn/versions
 
+
 /docs
 
 # testing
@@ -42,3 +43,6 @@ next-env.d.ts
 /.wrangler/
 /outputs/
 /work/
+
+
+prompt.txt

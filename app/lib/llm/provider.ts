@@ -2,10 +2,16 @@ import type { ModelRegistryEntry } from "../models";
 
 export type LLMMessage = { role: "user" | "assistant"; content: string };
 
+export type StructuredOutput = {
+  name: string;
+  schema: Record<string, unknown>;
+};
+
 export type GenerationRequest = {
   model: ModelRegistryEntry;
   system: string;
   messages: LLMMessage[];
+  structuredOutput?: StructuredOutput;
   signal?: AbortSignal;
 };
 

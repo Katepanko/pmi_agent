@@ -109,7 +109,7 @@ export type WorkspaceSnapshot = {
     modelKey?: string;
     projectId: string | null;
     messages: Array<{ id: string; role: "user" | "assistant"; content: string; createdAt: string; variant?: "demo-report" | "error"; artifact?: ArtifactRecord }>;
-    sources: Array<{ id: string; name: string; type: string; size: number; status: "extracted" | "partial" | "pending" | "failed"; excerpt?: string; warnings?: string[] }>;
+    sources: Array<{ id: string; name: string; type: string; size: number; status: "extracted" | "partial" | "pending" | "failed"; excerpt?: string; warnings?: string[]; metadata?: Record<string, unknown> }>;
   }>;
 };
 
@@ -158,7 +158,7 @@ export async function loadWorkspace(userId: string): Promise<WorkspaceSnapshot> 
       };
     }),
     sources: rawSources.filter((source) => source.chat_id === chat.id).map((source) => {
-      const metadata = JSON.parse(String(source.metadata_json || "{}")) as { excerpt?: string };
+      const metadata = JSON.parse(String(source.metadata_json || "{}")) as { excerpt?: string; sourceMetadata?: Record<string, unknown> };
       return {
         id: String(source.id),
         name: String(source.file_name),
@@ -166,6 +166,7 @@ export async function loadWorkspace(userId: string): Promise<WorkspaceSnapshot> 
         size: Number(source.size_bytes),
         status: source.extraction_status as "extracted" | "partial" | "pending" | "failed",
         excerpt: metadata.excerpt,
+        metadata: metadata.sourceMetadata,
         warnings: JSON.parse(String(source.extraction_warnings_json || "[]")) as string[],
       };
     }),
@@ -309,7 +310,7 @@ export async function syncWorkspace(userId: string, snapshot: WorkspaceSnapshot)
       await db.prepare(`INSERT INTO sources (id, user_id, project_id, chat_id, file_name, file_type, media_type, size_bytes, object_key, extraction_status, extraction_warnings_json, metadata_json, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET extraction_status = excluded.extraction_status, extraction_warnings_json = excluded.extraction_warnings_json, metadata_json = excluded.metadata_json, updated_at = excluded.updated_at
-      `).bind(source.id, userId, chat.projectId, chat.id, source.name, source.type, "application/octet-stream", source.size, `staged/${userId}/${source.id}`, source.status, JSON.stringify(source.warnings ?? []), JSON.stringify({ excerpt: source.excerpt }), now, now).run();
+      `).bind(source.id, userId, chat.projectId, chat.id, source.name, source.type, "application/octet-stream", source.size, `staged/${userId}/${source.id}`, source.status, JSON.stringify(source.warnings ?? []), JSON.stringify({ excerpt: source.excerpt, sourceMetadata: source.metadata }), now, now).run();
     }
   }
 

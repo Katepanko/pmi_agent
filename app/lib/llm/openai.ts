@@ -1,6 +1,7 @@
 import type { GenerationRequest, LLMProvider } from "./provider";
 import { mapServerSentEvents } from "./provider";
 import { extractOpenAIResponseText, type OpenAIResponsePayload } from "./openai-response";
+import { openAIStructuredOutputRequest } from "./openai-structured-output";
 
 export class OpenAIProvider implements LLMProvider {
   private readonly apiKey: string;
@@ -44,6 +45,7 @@ export class OpenAIProvider implements LLMProvider {
         model: request.model.modelId,
         instructions: request.system,
         input: request.messages,
+        ...openAIStructuredOutputRequest(request.structuredOutput),
         stream,
       }),
       signal: request.signal,

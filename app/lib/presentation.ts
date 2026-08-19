@@ -2,6 +2,8 @@ import PptxGenJS from "pptxgenjs";
 import type { SourceManifestItem } from "./pmi-prompt";
 import { applyDeloittePowerPointTemplate, DeloitteBrand, validateDeloittePowerPoint } from "./branding/deloitte.ts";
 import { conflictSummary, reconcileEvidence, type EvidenceReconciliation } from "./evidence.ts";
+import { describeTemplate, type ArtifactTemplate } from "./template.ts";
+import { fillPresentationTemplate } from "./presentation-template.ts";
 
 export const POWERPOINT_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 
@@ -21,6 +23,7 @@ export type PresentationItem = {
 
 export type PresentationSlide = {
   title: string;
+  templateSlide?: number;
   kicker?: string;
   keyMessage?: string;
   layout?: "cover" | "summary" | "trajectory" | "risks" | "synergies" | "decisions" | "timeline" | "comparison" | "cards";
@@ -85,6 +88,7 @@ export function buildPresentationPlanningPrompt(input: {
   history: Array<{ role: "user" | "assistant"; content: string }>;
   currentPresentation?: PresentationModel | null;
   reconciliation?: EvidenceReconciliation;
+  template?: ArtifactTemplate | null;
 }) {
   const reconciliation = input.reconciliation ?? reconcileEvidence(input.sources);
   const requestedCount = desiredSlideCount(input.request);
@@ -108,6 +112,13 @@ Evidence discipline:
 - Treat the deterministic reconciliation below as mandatory. Never select or average an unresolved conflicting value; show every material conflict with all source values and provenance.
 - Keep text concise enough for a management slide: no item detail over 42 words, no slide title over 18 words, and no more than 6 items per slide.
 
+Template discipline:
+- ${input.template ? `Use the explicitly selected ${input.template.fileType.toUpperCase()} file as the structural and visual template. Match its report sequence, recurring sections, content density, and slot purposes while replacing example content with PMI evidence.` : "No user template was selected. Use the application's standard presentation system."}
+- A template is not evidence about the PMI deal. Never copy its company names, metrics, dates, statuses, owners, conclusions, or other example facts into the new report.
+- Preserve meaningful template section roles, but omit an example section when no equivalent PMI evidence exists and clearly mark material evidence gaps.
+- The number of output slides is driven by the requested PMI story, not by the number of source-template slides. A source slide may be reused for multiple output slides, and unused source slides may be omitted.
+- When a semantic layout model is supplied, choose templateSlide for every output slide and keep the item count and wording within that source slide's stated region capacities. Prefer cards for the highest-priority items, then table rows, then body regions.
+
 Return ONLY one valid JSON object with this exact shape:
 {
   "title": "file/deck title",
@@ -120,6 +131,7 @@ Return ONLY one valid JSON object with this exact shape:
   "slides": [
     {
       "title": "action title stating a conclusion",
+      "templateSlide": "optional 1-based source-template slide number selected from the semantic layout model",
       "kicker": "optional section label",
       "keyMessage": "optional short implication",
       "layout": "cover|summary|trajectory|risks|synergies|decisions|timeline|comparison|cards",
@@ -139,12 +151,13 @@ Return ONLY one valid JSON object with this exact shape:
   ]
 }
 
-${requestedCount ? `The user requested ${requestedCount} total slides. Return exactly ${requestedCount} slide objects; the renderer will not add a separate cover slide.` : "Choose the smallest slide count that fully answers the request, normally 4–7 slides."}
+${requestedCount ? `The user requested ${requestedCount} total slides. Return exactly ${requestedCount} slide objects; the renderer will not add a separate cover slide.` : input.template?.fileType === "pptx" ? "Choose the smallest slide count that fully answers the request, normally 1–7 slides. Do not force the count to match the source deck; the renderer maps and duplicates template slides." : "Choose the smallest slide count that fully answers the request, normally 4–7 slides."}
 ${input.currentPresentation ? "This is a revision. Preserve every unaffected slide and change only what the user requested. The new output must remain a complete presentation." : "This is a new presentation."}
 
 Audience: ${input.audience || "Infer from request"}
 Project context: ${input.projectContext || "No project context supplied."}
 Complete source manifest: ${JSON.stringify(manifest)}
+Selected template (excluded from the evidence manifest): ${input.template ? JSON.stringify(describeTemplate(input.template)) : "None"}
 Deterministic cross-source reconciliation: ${JSON.stringify(conflictSummary(reconciliation))}
 Prior conversation: ${JSON.stringify(input.history.slice(-16))}
 Current presentation: ${input.currentPresentation ? JSON.stringify(input.currentPresentation) : "None"}
@@ -192,6 +205,7 @@ export function parsePresentationModel(raw: string, fallbackAudience: string): P
     });
     return {
       title: text(slide.title, `Management update ${slideIndex + 1}`),
+      templateSlide: typeof slide.templateSlide === "number" && Number.isInteger(slide.templateSlide) && slide.templateSlide > 0 ? slide.templateSlide : undefined,
       kicker: text(slide.kicker) || undefined,
       keyMessage: text(slide.keyMessage) || undefined,
       layout: ["cover", "summary", "trajectory", "risks", "synergies", "decisions", "timeline", "comparison", "cards"].includes(text(slide.layout))
@@ -322,7 +336,22 @@ function addCover(slide: PptxGenJS.Slide, model: PresentationModel, current: Pre
   slide.addText(`PMI Agent  ·  ${model.audience}`, { x: 0.84, y: 6.92, w: 5.5, h: 0.18, fontFace: "Aptos", fontSize: 7.5, color: "8FA096", charSpacing: 0.4, margin: 0 });
 }
 
-export async function renderPresentation(model: PresentationModel) {
+function imageTemplateData(template?: ArtifactTemplate | null) {
+  if (!template?.bytes || !["png", "jpg", "jpeg"].includes(template.fileType)) return null;
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let index = 0; index < template.bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...template.bytes.subarray(index, index + chunkSize));
+  }
+  const mediaType = template.fileType === "png" ? "image/png" : "image/jpeg";
+  return `data:${mediaType};base64,${btoa(binary)}`;
+}
+
+export async function renderPresentation(model: PresentationModel, template?: ArtifactTemplate | null) {
+  if (template?.fileType === "pptx") {
+    if (!template.bytes) throw new Error(`The selected template ${template.fileName} could not be loaded.`);
+    return fillPresentationTemplate(template.bytes, model);
+  }
   const slides = model.slides[0]?.layout === "cover" ? model.slides : [{
     title: model.title,
     keyMessage: model.executiveSummary,
@@ -331,6 +360,7 @@ export async function renderPresentation(model: PresentationModel) {
     sourceNotes: [],
   }, ...model.slides];
   const pptx = new PptxGenJS();
+  const imageTemplate = imageTemplateData(template);
   pptx.layout = "LAYOUT_WIDE";
   pptx.author = DeloitteBrand.name;
   pptx.company = DeloitteBrand.name;
@@ -350,6 +380,10 @@ export async function renderPresentation(model: PresentationModel) {
 
   slides.forEach((current) => {
     const slide = pptx.addSlide({ masterName: "PMI_CONSULTING" });
+    if (imageTemplate) {
+      slide.addImage({ data: imageTemplate, x: 0, y: 0, w: 13.333, h: 7.5, transparency: 12 });
+      slide.addShape("rect", { x: 0.25, y: 0.15, w: 12.83, h: 7.15, line: { transparency: 100 }, fill: { color: current.layout === "cover" ? COLORS.ink : COLORS.white, transparency: current.layout === "cover" ? 8 : 0 } });
+    }
     if (current.layout === "cover") {
       addCover(slide, model, current);
       slide.addNotes(`[Sources]\n${current.sourceNotes?.length ? current.sourceNotes.map((note) => `- ${note}`).join("\n") : "- No external claim on this cover slide."}`);
@@ -374,6 +408,7 @@ export async function renderPresentation(model: PresentationModel) {
         ? new Uint8Array(await result.arrayBuffer())
         : null;
   if (!generated) throw new Error("The PowerPoint renderer returned an unsupported output type.");
+  if (imageTemplate) return generated;
   const branded = applyDeloittePowerPointTemplate({
     generated,
     title: model.title,

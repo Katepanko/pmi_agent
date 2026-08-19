@@ -11,6 +11,7 @@ When the user asks for an artifact, the application handles planning and renderi
 export type SourceManifestItem = {
   id: string;
   fileName: string;
+  fileType?: string;
   status: "extracted" | "partial" | "pending" | "failed";
   locations?: string[];
   excerpt?: string;

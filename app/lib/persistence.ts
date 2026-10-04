@@ -14,6 +14,24 @@ export type ArtifactRecord = {
   version: number;
 };
 
+export type ArtifactOperation = "generate" | "translate" | "regenerate" | "convert";
+
+export type ArtifactContext = {
+  artifactId: string;
+  filename: string;
+  mimeType: string;
+  objectKey: string;
+  format: ArtifactFormat;
+  version: number;
+  unitCount: number;
+  unitLabel: string;
+  model: unknown;
+  contentLanguage: string;
+  parentArtifactId: string | null;
+  templateSourceId: string | null;
+  operation: ArtifactOperation;
+};
+
 async function database() {
   const db = getRuntimeBindings().DB;
   if (!db) throw new Error("Persistent storage is unavailable: the DB binding is not configured.");
@@ -71,7 +89,8 @@ export async function ensureCoreSchema() {
       mime_type TEXT NOT NULL, object_key TEXT NOT NULL, size_bytes INTEGER NOT NULL,
       report_type TEXT, version INTEGER NOT NULL DEFAULT 1, slide_count INTEGER,
       presentation_json TEXT, format TEXT NOT NULL DEFAULT 'pptx', unit_count INTEGER,
-      unit_label TEXT, model_json TEXT, parent_artifact_id TEXT, created_at TEXT NOT NULL,
+      unit_label TEXT, model_json TEXT, parent_artifact_id TEXT, content_language TEXT NOT NULL DEFAULT 'und',
+      template_source_id TEXT, generation_operation TEXT NOT NULL DEFAULT 'generate', created_at TEXT NOT NULL,
       FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE SET NULL,
       FOREIGN KEY(chat_id) REFERENCES chats(id) ON DELETE CASCADE,
       FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE
@@ -87,6 +106,9 @@ export async function ensureCoreSchema() {
       ["unit_label", "ALTER TABLE artifacts ADD COLUMN unit_label TEXT"],
       ["model_json", "ALTER TABLE artifacts ADD COLUMN model_json TEXT"],
       ["parent_artifact_id", "ALTER TABLE artifacts ADD COLUMN parent_artifact_id TEXT"],
+      ["content_language", "ALTER TABLE artifacts ADD COLUMN content_language TEXT NOT NULL DEFAULT 'und'"],
+      ["template_source_id", "ALTER TABLE artifacts ADD COLUMN template_source_id TEXT"],
+      ["generation_operation", "ALTER TABLE artifacts ADD COLUMN generation_operation TEXT NOT NULL DEFAULT 'generate'"],
     ] as const;
     for (const [name, statement] of additions) if (!names.has(name)) await db.prepare(statement).run();
   })().catch((error) => {
@@ -197,6 +219,56 @@ export async function loadLatestArtifact(userId: string, chatId: string) {
   return { format: row.format ?? "pptx", version: Number(row.version) };
 }
 
+export async function loadLatestArtifactContext(userId: string, chatId: string): Promise<ArtifactContext | null> {
+  await ensureCoreSchema();
+  const db = await database();
+  const row = await db.prepare(`SELECT a.id, a.filename, a.mime_type, a.object_key, a.format, a.version,
+      a.unit_count, a.unit_label, a.slide_count,
+      COALESCE(a.model_json, a.presentation_json) AS model_json, a.content_language, a.parent_artifact_id,
+      a.template_source_id, a.generation_operation
+    FROM artifacts a INNER JOIN chats c ON c.id = a.chat_id
+    WHERE a.chat_id = ? AND a.user_id = ? AND c.user_id = ?
+    ORDER BY a.created_at DESC, a.version DESC LIMIT 1
+  `).bind(chatId, userId, userId).first<Record<string, unknown>>();
+  if (!row?.id || !row.model_json) return null;
+  return {
+    artifactId: String(row.id),
+    filename: String(row.filename),
+    mimeType: String(row.mime_type),
+    objectKey: String(row.object_key),
+    format: String(row.format || "pptx") as ArtifactFormat,
+    version: Number(row.version),
+    unitCount: Number(row.unit_count ?? row.slide_count ?? 0),
+    unitLabel: String(row.unit_label || (row.format === "pptx" ? "slides" : "sections")),
+    model: JSON.parse(String(row.model_json)),
+    contentLanguage: String(row.content_language || "und"),
+    parentArtifactId: row.parent_artifact_id ? String(row.parent_artifact_id) : null,
+    templateSourceId: row.template_source_id ? String(row.template_source_id) : null,
+    operation: String(row.generation_operation || "generate") as ArtifactOperation,
+  };
+}
+
+export async function loadTemplateSource(userId: string, sourceId: string) {
+  await ensureCoreSchema();
+  const db = await database();
+  const row = await db.prepare(`SELECT id, file_name, file_type, object_key, extraction_status,
+      extraction_warnings_json, metadata_json
+    FROM sources WHERE id = ? AND user_id = ?
+  `).bind(sourceId, userId).first<Record<string, unknown>>();
+  if (!row) return null;
+  const metadata = JSON.parse(String(row.metadata_json || "{}")) as { excerpt?: string; sourceMetadata?: Record<string, unknown> };
+  return {
+    sourceId: String(row.id),
+    fileName: String(row.file_name),
+    fileType: String(row.file_type),
+    objectKey: String(row.object_key),
+    status: String(row.extraction_status) as "extracted" | "partial" | "pending" | "failed",
+    excerpt: metadata.excerpt,
+    metadata: metadata.sourceMetadata,
+    warnings: JSON.parse(String(row.extraction_warnings_json || "[]")) as string[],
+  };
+}
+
 export async function loadLatestArtifactModel(userId: string, chatId: string, format: ArtifactFormat) {
   await ensureCoreSchema();
   const db = await database();
@@ -229,6 +301,9 @@ export async function saveArtifact(input: {
   unitLabel: string;
   model: unknown;
   parentArtifactId?: string | null;
+  contentLanguage?: string;
+  templateSourceId?: string | null;
+  operation?: ArtifactOperation;
 }) {
   await ensureCoreSchema();
   const db = await database();
@@ -252,14 +327,16 @@ export async function saveArtifact(input: {
   await db.prepare(`INSERT INTO artifacts (
     id, user_id, project_id, chat_id, message_id, filename, mime_type, object_key,
     size_bytes, report_type, version, format, unit_count, unit_label, model_json,
-    slide_count, presentation_json, parent_artifact_id, created_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    slide_count, presentation_json, parent_artifact_id, content_language, template_source_id,
+    generation_operation, created_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     input.artifactId, input.userId, projectId, input.chatId, input.messageId, input.filename,
     input.mimeType, input.objectKey, input.sizeBytes, input.format === "pptx" ? "presentation" : "report", input.version,
     input.format, input.unitCount, input.unitLabel, JSON.stringify(input.model),
     input.format === "pptx" ? input.unitCount : null, input.format === "pptx" ? JSON.stringify(input.model) : null,
-    input.parentArtifactId ?? null, now,
+    input.parentArtifactId ?? null, input.contentLanguage ?? "und", input.templateSourceId ?? null,
+    input.operation ?? "generate", now,
   ).run();
 }
 

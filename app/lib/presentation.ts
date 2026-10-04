@@ -4,6 +4,7 @@ import { applyDeloittePowerPointTemplate, DeloitteBrand, validateDeloittePowerPo
 import { conflictSummary, reconcileEvidence, type EvidenceReconciliation } from "./evidence.ts";
 import { describeTemplate, type ArtifactTemplate } from "./template.ts";
 import { fillPresentationTemplate } from "./presentation-template.ts";
+import type { ArtifactLanguageContext } from "./language-context.ts";
 
 export const POWERPOINT_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 
@@ -63,18 +64,18 @@ const COLORS = {
   redPale: "FDECEC",
 };
 
-const REQUEST_ACTION = /\b(create|generate|prepare|make|build|produce|turn|draft|develop|put together)\b/i;
-const PRESENTATION_NOUN = /\b(power\s*point|pptx?|presentation|slide\s*deck|deck|slides?)\b/i;
-const REVISION_ACTION = /\b(change|revise|update|edit|adjust|refine|replace|remove|add|rework|make)\b/i;
+const REQUEST_ACTION = /\b(create|generate|prepare|make|build|produce|turn|draft|develop|put together|erstell\w*|generier\w*|bereit\w*|mach\w*|bau\w*|produzier\w*|entwerf\w*|entwickl\w*)\b/iu;
+const PRESENTATION_NOUN = /\b(power\s*point|pptx?|presentation|slide\s*deck|deck|slides?|präsentation|praesentation|folien?(?:satz)?)\b/iu;
+const REVISION_ACTION = /\b(change|revise|update|edit|adjust|refine|replace|remove|add|rework|make|änder\w*|aender\w*|überarbeit\w*|ueberarbeit\w*|aktualisier\w*|bearbeit\w*|pass\w*|verfeiner\w*|ersetz\w*|entfern\w*|füg\w*|fueg\w*)\b/iu;
 
 export function isPresentationRequest(message: string, hasPriorPresentation = false) {
-  const explicitRequest = PRESENTATION_NOUN.test(message) && (REQUEST_ACTION.test(message) || /\b\d+\s+slides?\b/i.test(message));
+  const explicitRequest = PRESENTATION_NOUN.test(message) && (REQUEST_ACTION.test(message) || /\b\d+\s+(?:slides?|folien?)\b/iu.test(message));
   const revisionRequest = hasPriorPresentation && REVISION_ACTION.test(message) && PRESENTATION_NOUN.test(message);
   return explicitRequest || revisionRequest;
 }
 
 function desiredSlideCount(message: string) {
-  const match = message.match(/\b(?:create|prepare|make|generate|build|produce)?\s*(\d{1,2})\s+slides?\b/i);
+  const match = message.match(/\b(?:create|prepare|make|generate|build|produce|erstell\w*|generier\w*|mach\w*)?\s*(\d{1,2})\s+(?:slides?|folien?)\b/iu);
   if (!match) return null;
   const count = Number(match[1]);
   return count >= 1 && count <= 15 ? count : null;
@@ -89,6 +90,7 @@ export function buildPresentationPlanningPrompt(input: {
   currentPresentation?: PresentationModel | null;
   reconciliation?: EvidenceReconciliation;
   template?: ArtifactTemplate | null;
+  languageContext?: ArtifactLanguageContext;
 }) {
   const reconciliation = input.reconciliation ?? reconcileEvidence(input.sources);
   const requestedCount = desiredSlideCount(input.request);
@@ -111,6 +113,12 @@ Evidence discipline:
 - Surface material uncertainty and incomplete extraction.
 - Treat the deterministic reconciliation below as mandatory. Never select or average an unresolved conflicting value; show every material conflict with all source values and provenance.
 - Keep text concise enough for a management slide: no item detail over 42 words, no slide title over 18 words, and no more than 6 items per slide.
+
+Language contract:
+- The user's communication language is ${input.languageContext?.communicationLanguage === "de" ? "German" : "English"}.
+- Generate every user-visible string in the presentation exclusively in ${input.languageContext?.outputLanguage.name ?? "the language explicitly requested by the user, or the request language when none was specified"}${input.languageContext ? ` (${input.languageContext.outputLanguage.code})` : ""}.
+- The source artifact language is ${input.languageContext?.sourceArtifactLanguage?.name ?? "not applicable or unknown"}. This is independent of both the conversation language and the requested presentation language.
+- Do not translate source identifiers, proper names, or control/enum values. Do not mix languages merely because the prompt, sources, or template use another language.
 
 Template discipline:
 - ${input.template ? `Use the explicitly selected ${input.template.fileType.toUpperCase()} file as the structural and visual template. Match its report sequence, recurring sections, content density, and slot purposes while replacing example content with PMI evidence.` : "No user template was selected. Use the application's standard presentation system."}

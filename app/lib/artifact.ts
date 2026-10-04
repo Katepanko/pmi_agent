@@ -13,14 +13,15 @@ import {
 } from "./presentation";
 import { renderExcelWorkbook } from "./renderers/excel";
 import { renderWordDocument } from "./renderers/word";
-import { renderPdfReport } from "./renderers/pdf";
+import { renderPdfReport, type PdfRenderLocale } from "./renderers/pdf";
 import { renderHtmlDashboard } from "./renderers/html";
 import type { ArtifactFormat } from "./artifact-intent";
 import { DeloitteBrand } from "./branding/deloitte";
 import { describeTemplate, type ArtifactTemplate } from "./template.ts";
 import { fillCsvTemplate, fillExcelTemplate, fillHtmlTemplate, fillPdfTemplate, fillWordTemplate } from "./report-template.ts";
+import type { ArtifactLanguageContext } from "./language-context.ts";
 
-export { detectArtifactRequest, type ArtifactFormat } from "./artifact-intent";
+export { detectArtifactRequest, isArtifactRevisionRequest, type ArtifactFormat } from "./artifact-intent";
 
 export type ConsultingReportItem = {
   label: string;
@@ -145,6 +146,7 @@ export function buildConsultingArtifactPrompt(input: {
   currentModel?: ConsultingReportModel | null;
   reconciliation?: EvidenceReconciliation;
   template?: ArtifactTemplate | null;
+  languageContext?: ArtifactLanguageContext;
 }) {
   const reconciliation = input.reconciliation ?? reconcileEvidence(input.sources);
   const formatPurpose: Record<Exclude<ArtifactFormat, "pptx">, string> = {
@@ -173,6 +175,12 @@ Evidence discipline:
 - Treat the deterministic reconciliation below as mandatory. Do not select or average an unresolved conflicting value. Include every material conflict naturally in the relevant management section with values and provenance.
 - Recommendations must be supportable and require validation.
 - Keep item text concise; avoid walls of text and raw dumps.
+
+Language contract:
+- The user's communication language is ${input.languageContext?.communicationLanguage === "de" ? "German" : "English"}.
+- Generate every user-visible string in the artifact exclusively in ${input.languageContext?.outputLanguage.name ?? "the language explicitly requested by the user, or the request language when none was specified"}${input.languageContext ? ` (${input.languageContext.outputLanguage.code})` : ""}.
+- The source artifact language is ${input.languageContext?.sourceArtifactLanguage?.name ?? "not applicable or unknown"}. This is independent of both the conversation language and the requested artifact language.
+- Do not translate source identifiers, proper names, or control/enum values. Do not mix languages merely because the prompt, sources, or template use another language.
 
 Template discipline:
 - ${input.template ? `Use the explicitly selected ${input.template.fileType.toUpperCase()} file as the report template. Match its section order, field/table semantics, density, and visual hierarchy where the requested output format supports them.` : "No user template was selected. Use the application's standard report system."}
@@ -239,6 +247,7 @@ export async function renderArtifact(input: {
   version: number;
   sources: SourceManifestItem[];
   template?: ArtifactTemplate | null;
+  locale?: PdfRenderLocale;
 }): Promise<RenderedArtifact> {
   if (input.format === "pptx") {
     const model = input.model as PresentationModel;
@@ -270,10 +279,10 @@ export async function renderArtifact(input: {
   }
   if (input.format === "pdf") {
     if (input.template?.fileType === "pdf" && input.template.bytes) {
-      const result = await fillPdfTemplate(input.template.bytes, model);
+      const result = await fillPdfTemplate(input.template.bytes, model, input.locale);
       return { format: "pdf", mimeType: ARTIFACT_MIME.pdf, filename, bytes: result.bytes, unitCount: result.pageCount, unitLabel: "pages" };
     }
-    const result = await renderPdfReport(model, input.sources);
+    const result = await renderPdfReport(model, input.sources, input.locale);
     return { format: "pdf", mimeType: ARTIFACT_MIME.pdf, filename, bytes: result.bytes, unitCount: result.pageCount, unitLabel: "pages" };
   }
   const html = input.template && ["html", "htm"].includes(input.template.fileType) && input.template.bytes
@@ -324,6 +333,7 @@ export function planArtifact(input: {
   currentModel?: ArtifactContentModel | null;
   reconciliation?: EvidenceReconciliation;
   template?: ArtifactTemplate | null;
+  languageContext?: ArtifactLanguageContext;
 }) {
   if (input.format === "pptx") {
     return buildPresentationPlanningPrompt({ ...input, currentPresentation: input.currentModel as PresentationModel | null | undefined });

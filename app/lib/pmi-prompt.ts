@@ -1,4 +1,5 @@
 import { conflictSummary, reconcileEvidence, type EvidenceReconciliation } from "./evidence.ts";
+import type { CommunicationLanguage } from "./language-context.ts";
 
 export const PMI_SYSTEM_PROMPT = `You are a senior Post-Merger Integration consultant supporting Integration Management Offices, functional workstreams, CFOs, CEOs, Steering Committees, and Boards.
 
@@ -26,6 +27,7 @@ export function buildGroundedPrompt(input: {
   sourceRules?: string[];
   currentDraft?: string;
   reconciliation?: EvidenceReconciliation;
+  communicationLanguage?: CommunicationLanguage;
 }) {
   const reconciliation = input.reconciliation ?? reconcileEvidence(input.sources);
   const manifest = input.sources.map((source) => ({
@@ -39,6 +41,9 @@ export function buildGroundedPrompt(input: {
 
   return [
     PMI_SYSTEM_PROMPT,
+    input.communicationLanguage === "de"
+      ? "Conversation language: German. Answer the user's latest request naturally in German. This affects only the conversational response; never infer or change a document's language from it."
+      : "Conversation language: English. Answer the user's latest request naturally in English. This affects only the conversational response; never infer or change a document's language from it.",
     `Audience: ${input.audience || "Infer from the request."}`,
     `Project context:\n${input.projectContext || "No project context was supplied."}`,
     `Source authority rules:\n${input.sourceRules?.join("\n") || "No user-defined authority rules."}`,

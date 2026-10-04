@@ -67,12 +67,12 @@ export type ExistingContentHistoryEntry = {
   variant?: "demo-report" | "error";
 };
 
-const CONTENT_REFERENCE = /\b(?:this text|the text above|text above|above|previous (?:answer|response)|your previous (?:answer|response)|what you just wrote|same content|exactly this|use this content|this content|this)\b/i;
-const EDIT_ACTION = /\b(?:shorten|condense|summari[sz]e|rewrite|rephrase|expand|translate|remove|change|edit|revise|adjust)\b/i;
+const CONTENT_REFERENCE = /\b(?:this text|the text above|text above|above|previous (?:answer|response)|your previous (?:answer|response)|what you just wrote|same content|exactly this|use this content|this content|this|dies(?:er|e|es|en)?\s+text|text\s+oben|obige[nsr]?\s+text|vorherige[nsr]?\s+(?:antwort|text)|deine\s+vorherige\s+antwort|was\s+du\s+gerade\s+geschrieben\s+hast|gleiche[nsr]?\s+inhalt|genau\s+das|nutz\w*\s+diese[nsr]?\s+inhalt|diese[nsr]?\s+inhalt)\b/iu;
+const EDIT_ACTION = /\b(?:shorten|condense|summari[sz]e|rewrite|rephrase|expand|translate|remove|change|edit|revise|adjust|kürz\w*|kuerz\w*|verdicht\w*|fass\w*\s+zusammen|umschreib\w*|formulier\w*|erweiter\w*|übersetz\w*|uebersetz\w*|entfern\w*|änder\w*|aender\w*|bearbeit\w*|überarbeit\w*|ueberarbeit\w*|pass\w*)\b/iu;
 
 export function referencesExistingContent(message: string) {
-  if (/\bthis\s+(?:uploaded\s+)?(?:file|upload|source|data|spreadsheet|workbook|deck)\b/i.test(message) && !/\b(?:this text|this content|previous (?:answer|response)|above)\b/i.test(message)) return false;
-  return CONTENT_REFERENCE.test(message);
+  if (/\b(?:this\s+(?:uploaded\s+)?(?:file|upload|source|data|spreadsheet|workbook|deck)|diese[nsr]?\s+(?:hochgeladene[nsr]?\s+)?(?:datei|upload|quelle|daten|tabelle|arbeitsmappe|präsentation))\b/iu.test(message) && !/\b(?:this text|this content|previous (?:answer|response)|above|diese[nsr]?\s+(?:text|inhalt)|vorherige[nsr]?\s+antwort|oben)\b/iu.test(message)) return false;
+  return CONTENT_REFERENCE.test(message) || /\b(?:speicher\w*|exportier\w*|wandel\w*|konvertier\w*)\s+(?:das|dies|es)\s+(?:als|in)\b/iu.test(message);
 }
 
 function visibleInlineMarkdown(value: string) {

@@ -1,8 +1,15 @@
 import ExcelJS from "exceljs";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+import { PDFDocument, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import type { ConsultingReportItem, ConsultingReportModel } from "./artifact";
 import { deloitteLogoBytes, DeloitteBrand } from "./branding/deloitte.ts";
+import { embedPdfFonts } from "./pdf-fonts.ts";
+
+type PdfTemplateLocale = {
+  languageCode: string;
+  direction: "ltr" | "rtl";
+  labels?: Record<string, string>;
+};
 
 type TemplateFieldRole = "title" | "subtitle" | "audience" | "period" | "summary" | "label" | "value" | "detail" | "implication" | "recommendation" | "owner" | "deadline" | "status" | "sources";
 
@@ -336,11 +343,11 @@ function wrap(value: string, font: PDFFont, size: number, width: number) {
   return lines;
 }
 
-function drawTextBlock(page: PDFPage, value: string, options: { x: number; y: number; width: number; size: number; font: PDFFont; color: ReturnType<typeof rgb>; maxLines?: number }) {
+function drawTextBlock(page: PDFPage, value: string, options: { x: number; y: number; width: number; size: number; font: PDFFont; color: ReturnType<typeof rgb>; maxLines?: number; rtl?: boolean }) {
   const lines = wrap(value, options.font, options.size, options.width).slice(0, options.maxLines ?? 20);
   let y = options.y;
   for (const line of lines) {
-    page.drawText(line, { x: options.x, y, size: options.size, font: options.font, color: options.color });
+    page.drawText(line, { x: options.rtl ? options.x + options.width - options.font.widthOfTextAtSize(line, options.size) : options.x, y, size: options.size, font: options.font, color: options.color });
     y -= options.size + 4;
   }
   return y;
@@ -364,10 +371,12 @@ function tryFillPdfForm(document: PDFDocument, model: ConsultingReportModel) {
   return filled;
 }
 
-export async function fillPdfTemplate(templateBytes: Uint8Array, model: ConsultingReportModel) {
+export async function fillPdfTemplate(templateBytes: Uint8Array, model: ConsultingReportModel, locale?: PdfTemplateLocale) {
   const source = await PDFDocument.load(templateBytes);
   if (!source.getPageCount()) throw new Error("The selected PDF template has no pages.");
+  const sourceFonts = await embedPdfFonts(source, locale?.languageCode);
   if (tryFillPdfForm(source, model)) {
+    try { source.getForm().updateFieldAppearances(sourceFonts.regular); } catch { /* Some third-party form appearances cannot be regenerated. */ }
     source.setTitle(model.title);
     source.setAuthor(DeloitteBrand.name);
     source.setSubject(model.executiveSummary);
@@ -380,8 +389,23 @@ export async function fillPdfTemplate(templateBytes: Uint8Array, model: Consulti
   document.setTitle(model.title);
   document.setAuthor(DeloitteBrand.name);
   document.setSubject(model.executiveSummary);
-  const regular = await document.embedFont(StandardFonts.Helvetica);
-  const bold = await document.embedFont(StandardFonts.HelveticaBold);
+  const { regular, bold } = await embedPdfFonts(document, locale?.languageCode);
+  const rtl = locale?.direction === "rtl";
+  const labels = {
+    implication: locale?.labels?.implication ?? "Implication",
+    recommendation: locale?.labels?.recommendation ?? "Recommendation — validation required",
+    owner: locale?.labels?.ownerTiming ?? "Owner",
+    by: locale?.labels?.by ?? "By",
+  };
+  const localizedItemText = (item: ConsultingReportItem) => [
+    item.value,
+    item.label,
+    item.detail,
+    item.implication ? `${labels.implication}: ${item.implication}` : undefined,
+    item.recommendation ? `${labels.recommendation}: ${item.recommendation}` : undefined,
+    item.owner ? `${labels.owner}: ${item.owner}` : undefined,
+    item.deadline ? `${labels.by}: ${item.deadline}` : undefined,
+  ].filter(Boolean).join("\n");
   const logo = await document.embedPng(deloitteLogoBytes());
   const requiredPages = Math.max(1, model.sections.length + 1);
   const sizes = source.getPages().map((page) => page.getSize());
@@ -395,18 +419,18 @@ export async function fillPdfTemplate(templateBytes: Uint8Array, model: Consulti
     let y = height - margin - 55;
     const section = model.sections[index - 1];
     if (index === 0) {
-      y = drawTextBlock(page, model.title, { x: margin + 18, y, width: width - margin * 2 - 36, size: 23, font: bold, color: rgb(0, 0, 0), maxLines: 3 });
+      y = drawTextBlock(page, model.title, { x: margin + 18, y, width: width - margin * 2 - 36, size: 23, font: bold, color: rgb(0, 0, 0), maxLines: 3, rtl });
       y -= 15;
-      y = drawTextBlock(page, model.executiveSummary, { x: margin + 18, y, width: width - margin * 2 - 36, size: 13, font: bold, color: rgb(0.02, 0.42, 0.22), maxLines: 8 });
+      y = drawTextBlock(page, model.executiveSummary, { x: margin + 18, y, width: width - margin * 2 - 36, size: 13, font: bold, color: rgb(0.02, 0.42, 0.22), maxLines: 8, rtl });
       y -= 12;
-      drawTextBlock(page, [model.subtitle, model.audience, model.reportingPeriod].filter(Boolean).join(" | "), { x: margin + 18, y, width: width - margin * 2 - 36, size: 9, font: regular, color: rgb(0.35, 0.35, 0.35), maxLines: 4 });
+      drawTextBlock(page, [model.subtitle, model.audience, model.reportingPeriod].filter(Boolean).join(" | "), { x: margin + 18, y, width: width - margin * 2 - 36, size: 9, font: regular, color: rgb(0.35, 0.35, 0.35), maxLines: 4, rtl });
     } else if (section) {
-      y = drawTextBlock(page, section.title, { x: margin + 18, y, width: width - margin * 2 - 36, size: 18, font: bold, color: rgb(0, 0, 0), maxLines: 3 });
-      if (section.keyMessage) { y -= 8; y = drawTextBlock(page, section.keyMessage, { x: margin + 18, y, width: width - margin * 2 - 36, size: 11, font: bold, color: rgb(0.02, 0.42, 0.22), maxLines: 4 }); }
+      y = drawTextBlock(page, section.title, { x: margin + 18, y, width: width - margin * 2 - 36, size: 18, font: bold, color: rgb(0, 0, 0), maxLines: 3, rtl });
+      if (section.keyMessage) { y -= 8; y = drawTextBlock(page, section.keyMessage, { x: margin + 18, y, width: width - margin * 2 - 36, size: 11, font: bold, color: rgb(0.02, 0.42, 0.22), maxLines: 4, rtl }); }
       for (const item of section.items.slice(0, 8)) {
         if (y < margin + 70) break;
         y -= 13;
-        y = drawTextBlock(page, itemText(item), { x: margin + 18, y, width: width - margin * 2 - 36, size: 9.5, font: regular, color: rgb(0.16, 0.16, 0.16), maxLines: 7 });
+        y = drawTextBlock(page, localizedItemText(item), { x: margin + 18, y, width: width - margin * 2 - 36, size: 9.5, font: regular, color: rgb(0.16, 0.16, 0.16), maxLines: 7, rtl });
       }
     }
     page.drawText(`${index + 1} / ${requiredPages}`, { x: width - margin - 35, y: margin + 10, size: 7, font: regular, color: rgb(0.4, 0.4, 0.4) });

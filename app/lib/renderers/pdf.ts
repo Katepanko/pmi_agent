@@ -1,7 +1,32 @@
-import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb } from "pdf-lib";
+import { PDFDocument, PDFFont, PDFPage, rgb } from "pdf-lib";
 import type { ConsultingReportModel } from "../artifact";
 import type { SourceManifestItem } from "../pmi-prompt";
 import { deloitteLogoBytes, DeloitteBrand } from "../branding/deloitte.ts";
+import { embedPdfFonts } from "../pdf-fonts.ts";
+
+export const PDF_VISIBLE_LABELS = {
+  managementReport: "MANAGEMENT REPORT",
+  executiveMessage: "EXECUTIVE MESSAGE",
+  evidenceGap: "Evidence gap",
+  noSupportedDetail: "No supported detail was available for this section.",
+  notEvidenced: "Not evidenced",
+  implication: "Implication",
+  recommendation: "Recommendation — validation required",
+  ownerTiming: "Owner / timing",
+  by: "By",
+  sources: "Sources",
+  sourcesLimitations: "Sources / limitations",
+  evidenceRegister: "Evidence register",
+  sourceCoverage: "Complete source coverage and extraction limitations",
+  id: "ID",
+  warning: "Warning",
+} as const;
+
+export type PdfRenderLocale = {
+  languageCode: string;
+  direction: "ltr" | "rtl";
+  labels?: Partial<Record<keyof typeof PDF_VISIBLE_LABELS, string>>;
+};
 
 const PAGE = { width: 612, height: 792, left: 48, right: 48, top: 54, bottom: 48 };
 const COLORS = {
@@ -46,11 +71,12 @@ function wrap(text: string, font: PDFFont, size: number, maxWidth: number) {
   return lines;
 }
 
-export async function renderPdfReport(model: ConsultingReportModel, sources: SourceManifestItem[]) {
+export async function renderPdfReport(model: ConsultingReportModel, sources: SourceManifestItem[], locale?: PdfRenderLocale) {
   const doc = await PDFDocument.create();
   doc.setTitle(model.title); doc.setAuthor(DeloitteBrand.name); doc.setSubject(model.executiveSummary);
-  const regular = await doc.embedFont(StandardFonts.Helvetica);
-  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const { regular, bold } = await embedPdfFonts(doc, locale?.languageCode);
+  const labels = { ...PDF_VISIBLE_LABELS, ...(locale?.labels ?? {}) };
+  const rtl = locale?.direction === "rtl";
   const logo = await doc.embedPng(deloitteLogoBytes());
   let page!: PDFPage;
   let y = 0;
@@ -59,14 +85,18 @@ export async function renderPdfReport(model: ConsultingReportModel, sources: Sou
     page = doc.addPage([PAGE.width, PAGE.height]); pages.push(page); y = PAGE.height - PAGE.top - 28;
     page.drawRectangle({ x: 0, y: 0, width: 8, height: PAGE.height, color: COLORS.green });
     page.drawImage(logo, { x: PAGE.left, y: PAGE.height - 43, width: 112, height: 21 });
-    page.drawText("MANAGEMENT REPORT", { x: PAGE.left, y, size: 8, font: bold, color: COLORS.green }); y -= 24;
+    const heading = labels.managementReport;
+    page.drawText(heading, { x: rtl ? PAGE.width - PAGE.right - bold.widthOfTextAtSize(heading, 8) : PAGE.left, y, size: 8, font: bold, color: COLORS.green }); y -= 24;
   };
   const ensure = (height: number) => { if (y - height < PAGE.bottom) newPage(); };
   const drawLines = (text: string, options: { size?: number; font?: PDFFont; color?: ReturnType<typeof rgb>; indent?: number; gap?: number; maxWidth?: number } = {}) => {
     const size = options.size ?? 9.5; const font = options.font ?? regular; const indent = options.indent ?? 0; const gap = options.gap ?? 3;
     const lines = wrap(text, font, size, options.maxWidth ?? PAGE.width - PAGE.left - PAGE.right - indent);
     const height = lines.length * (size + gap); ensure(height + 4);
-    for (const line of lines) { page.drawText(line, { x: PAGE.left + indent, y, size, font, color: options.color ?? COLORS.body }); y -= size + gap; }
+    for (const line of lines) {
+      const x = rtl ? PAGE.width - PAGE.right - indent - font.widthOfTextAtSize(line, size) : PAGE.left + indent;
+      page.drawText(line, { x, y, size, font, color: options.color ?? COLORS.body }); y -= size + gap;
+    }
     return height;
   };
   const rule = () => { ensure(12); y -= 5; page.drawLine({ start: { x: PAGE.left, y }, end: { x: PAGE.width - PAGE.right, y }, thickness: 0.6, color: COLORS.line }); y -= 10; };
@@ -80,9 +110,9 @@ export async function renderPdfReport(model: ConsultingReportModel, sources: Sou
   const boxHeight = summaryLines.length * 18 + 34; ensure(boxHeight);
   page.drawRectangle({ x: PAGE.left, y: y - boxHeight + 8, width: PAGE.width - PAGE.left - PAGE.right, height: boxHeight, color: COLORS.greenPale });
   page.drawRectangle({ x: PAGE.left, y: y - boxHeight + 8, width: 5, height: boxHeight, color: COLORS.green });
-  page.drawText("EXECUTIVE MESSAGE", { x: PAGE.left + 16, y: y - 8, size: 8, font: bold, color: COLORS.green });
+  page.drawText(labels.executiveMessage, { x: rtl ? PAGE.width - PAGE.right - 16 - bold.widthOfTextAtSize(labels.executiveMessage, 8) : PAGE.left + 16, y: y - 8, size: 8, font: bold, color: COLORS.green });
   y -= 28;
-  summaryLines.forEach((line) => { page.drawText(line, { x: PAGE.left + 16, y, size: 14, font: bold, color: COLORS.ink }); y -= 18; });
+  summaryLines.forEach((line) => { page.drawText(line, { x: rtl ? PAGE.width - PAGE.right - 16 - bold.widthOfTextAtSize(line, 14) : PAGE.left + 16, y, size: 14, font: bold, color: COLORS.ink }); y -= 18; });
   y -= 18;
 
   model.sections.forEach((section, sectionIndex) => {
@@ -92,28 +122,28 @@ export async function renderPdfReport(model: ConsultingReportModel, sources: Sou
     if (sectionIndex) rule();
     drawLines(section.title, { size: 16, font: bold, color: COLORS.ink, gap: 4 });
     if (section.keyMessage) { y -= 2; drawLines(section.keyMessage, { size: 10.5, font: bold, color: COLORS.green, indent: 10 }); y -= 5; }
-    const items = section.items.length ? section.items : [{ label: "Evidence gap", detail: "No supported detail was available for this section." }];
+    const items = section.items.length ? section.items : [{ label: labels.evidenceGap, detail: labels.noSupportedDetail }];
     for (const item of items) {
       ensure(66);
       const statusColor = item.status === "green" ? COLORS.green : item.status === "amber" ? COLORS.amber : item.status === "red" ? COLORS.red : COLORS.muted;
       page.drawRectangle({ x: PAGE.left, y: y - 3, width: 4, height: 13, color: statusColor });
       drawLines(`${item.label}${item.value ? `  |  ${item.value}` : ""}`, { size: 10, font: bold, color: COLORS.ink, indent: 12 });
-      const detail = [item.detail ?? "Not evidenced", item.implication && `Implication: ${item.implication}`, item.recommendation && `Recommendation — validation required: ${item.recommendation}`, [item.owner, item.deadline].filter(Boolean).length && `Owner / timing: ${[item.owner, item.deadline].filter(Boolean).join(" | ")}`, item.sourceRefs?.length && `Sources: ${item.sourceRefs.join(", ")}`].filter(Boolean).join("  ");
+      const detail = [item.detail ?? labels.notEvidenced, item.implication && `${labels.implication}: ${item.implication}`, item.recommendation && `${labels.recommendation}: ${item.recommendation}`, [item.owner, item.deadline].filter(Boolean).length && `${labels.ownerTiming}: ${[item.owner, item.deadline].filter(Boolean).join(" | ")}`, item.sourceRefs?.length && `${labels.sources}: ${item.sourceRefs.join(", ")}`].filter(Boolean).join("  ");
       drawLines(detail, { size: 8.7, color: COLORS.body, indent: 12, maxWidth: PAGE.width - PAGE.left - PAGE.right - 12 });
       y -= 8;
     }
-    if (section.sourceNotes?.length) drawLines(`Sources / limitations: ${section.sourceNotes.join(" | ")}`, { size: 7.5, color: COLORS.muted });
+    if (section.sourceNotes?.length) drawLines(`${labels.sourcesLimitations}: ${section.sourceNotes.join(" | ")}`, { size: 7.5, color: COLORS.muted });
   });
 
   if (sources.length) {
     ensure(180);
     rule();
-    drawLines("Evidence register", { size: 18, font: bold, color: COLORS.ink });
-    drawLines("Complete source coverage and extraction limitations", { size: 9, color: COLORS.muted }); y -= 8;
+    drawLines(labels.evidenceRegister, { size: 18, font: bold, color: COLORS.ink });
+    drawLines(labels.sourceCoverage, { size: 9, color: COLORS.muted }); y -= 8;
     sources.forEach((source) => {
       ensure(58);
       drawLines(`${source.fileName}  |  ${source.status.toUpperCase()}`, { size: 10, font: bold, color: COLORS.ink });
-      drawLines([`ID: ${source.id}`, source.excerpt ?? "Not evidenced", ...(source.warnings ?? []).map((warning) => `Warning: ${warning}`)].join("  "), { size: 8.5, color: COLORS.body });
+      drawLines([`${labels.id}: ${source.id}`, source.excerpt ?? labels.notEvidenced, ...(source.warnings ?? []).map((warning) => `${labels.warning}: ${warning}`)].join("  "), { size: 8.5, color: COLORS.body });
       rule();
     });
   }

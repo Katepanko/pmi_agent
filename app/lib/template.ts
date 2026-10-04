@@ -58,7 +58,7 @@ export function resolveTemplateReference(message: string, sources: SourceManifes
 }
 
 export function hasUnresolvedTemplateDirective(message: string) {
-  return /@/.test(message) && (/\btemplate\b/i.test(message) || /\.(?:pptx|xlsx?|csv|docx|pdf|html?|png|jpe?g)\b/i.test(message));
+  return /@/.test(message) && (/\b(?:template|vorlage)\b/iu.test(message) || /\.(?:pptx|xlsx?|csv|docx|pdf|html?|png|jpe?g)\b/i.test(message));
 }
 
 export function templateMention(fileName: string) {

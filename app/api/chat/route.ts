@@ -31,6 +31,7 @@ import {
   parseBlockEditResponse,
   parseExistingContentDesignPlan,
   resolveExistingContentRequest,
+  type ExistingContentHistoryEntry,
 } from "../../lib/existing-content";
 import { renderExistingContent } from "../../lib/renderers/existing-content";
 
@@ -39,7 +40,7 @@ export const dynamic = "force-dynamic";
 type ChatBody = {
   modelKey?: string;
   message?: string;
-  history?: Array<{ role: "user" | "assistant"; content: string }>;
+  history?: ExistingContentHistoryEntry[];
   projectContext?: string;
   audience?: string;
   sources?: SourceManifestItem[];
@@ -267,7 +268,7 @@ export async function POST(request: Request) {
     const stream = await provider.stream({
       model,
       system,
-      messages: [...(body.history ?? []).slice(-20), { role: "user", content: body.message }],
+      messages: [...(body.history ?? []).slice(-20).map(({ role, content }) => ({ role, content })), { role: "user", content: body.message }],
       signal: request.signal,
     });
 

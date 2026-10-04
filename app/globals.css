@@ -177,8 +177,19 @@ button { color: inherit; }
 
 .chat-header { height: 76px; flex: 0 0 76px; background: rgba(255,255,255,.96); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 0 28px; z-index: 2; }
 .header-title-group { min-width: 0; display: flex; align-items: center; gap: 12px; }
+.header-copy { min-width: 0; }
 .header-title-group h1 { margin: 2px 0 0; font-size: 17px; line-height: 1.2; letter-spacing: -.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .eyebrow { color: var(--muted); font-size: 9.5px; font-weight: 760; text-transform: uppercase; letter-spacing: .13em; }
+.project-name-trigger { max-width: 100%; padding: 0; border: 0; background: transparent; display: flex; align-items: center; gap: 6px; cursor: text; }
+.project-name-trigger span:first-child { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.project-name-trigger span:last-child { opacity: 0; font-size: 10px; transition: opacity .15s ease; }
+.project-name-trigger:hover span:last-child, .project-name-trigger:focus-visible span:last-child { opacity: 1; }
+.project-name-editor { height: 25px; display: flex; align-items: center; gap: 5px; }
+.project-name-editor input { width: min(260px, 28vw); height: 25px; border: 1px solid #91cbaa; border-radius: 6px; padding: 0 7px; outline: 0; color: var(--ink); background: white; font-size: 11px; font-weight: 680; }
+.project-name-editor input:focus { box-shadow: 0 0 0 2px rgba(4,106,56,.12); }
+.project-name-editor button { height: 24px; padding: 0 7px; border: 1px solid var(--line); border-radius: 6px; background: white; color: #465249; font-size: 9px; font-weight: 700; }
+.project-name-editor button[type="submit"] { border-color: var(--green); background: var(--green); color: white; }
+.project-name-editor button:disabled { opacity: .45; }
 .header-controls { display: flex; align-items: center; gap: 8px; }
 
 .model-select-wrap { position: relative; height: 38px; display: flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 9px; background: #fafcf9; padding: 0 30px 0 11px; }
@@ -391,12 +402,16 @@ button { color: inherit; }
 .drawer-empty h3 { color: var(--ink); margin: 13px 0 7px; }
 .drawer-empty p { font-size: 10px; line-height: 1.55; }
 .context-project-mark { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 12px; background: #1b2b21; color: #7ee0a7; font-weight: 800; }
-.context-drawer h3 { margin: 11px 0 5px; font-size: 17px; }
+.context-name-field { display: grid; gap: 5px; margin-top: 11px; color: #556259; font-size: 9px; font-weight: 730; text-transform: uppercase; letter-spacing: .06em; }
+.context-name-field input { width: 100%; border: 1px solid transparent; border-radius: 7px; margin-left: -8px; padding: 5px 7px; outline: 0; background: transparent; color: var(--ink); font-size: 17px; font-weight: 650; text-transform: none; letter-spacing: 0; }
+.context-name-field input:hover { border-color: var(--line); background: white; }
+.context-name-field input:focus { border-color: #77b993; background: white; box-shadow: 0 0 0 3px rgba(24,168,98,.08); }
 .context-drawer > p { color: #6f7c73; font-size: 10px; line-height: 1.5; }
-.context-drawer label { display: grid; gap: 7px; margin-top: 19px; color: #556259; font-size: 9px; font-weight: 730; text-transform: uppercase; letter-spacing: .06em; }
+.context-drawer > label:not(.context-name-field) { display: grid; gap: 7px; margin-top: 19px; color: #556259; font-size: 9px; font-weight: 730; text-transform: uppercase; letter-spacing: .06em; }
 .context-drawer textarea { width: 100%; resize: vertical; min-height: 160px; border: 1px solid var(--line); border-radius: 9px; background: white; padding: 11px; outline: 0; color: #314037; font-size: 10px; line-height: 1.5; text-transform: none; letter-spacing: 0; }
 .context-drawer textarea:focus { border-color: #77b993; box-shadow: 0 0 0 3px rgba(24,168,98,.08); }
 .save-context { width: 100%; height: 38px; margin-top: 9px; border: 0; border-radius: 8px; background: var(--green); color: #07170e; font-weight: 750; font-size: 10px; }
+.save-context:disabled { opacity: .5; }
 .boundary-note { margin-top: 19px; padding: 12px; display: grid; gap: 3px; border: 1px solid var(--line); border-radius: 8px; background: #f3f6f2; }
 .boundary-note strong { font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
 .boundary-note span { color: var(--green-deep); font: 8px var(--font-geist-mono); }

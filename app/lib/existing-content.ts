@@ -60,6 +60,13 @@ export type ExistingContentRequest = {
   editInstruction?: string;
 };
 
+export type ExistingContentHistoryEntry = {
+  role: "user" | "assistant";
+  content: string;
+  artifact?: boolean;
+  variant?: "demo-report" | "error";
+};
+
 const CONTENT_REFERENCE = /\b(?:this text|the text above|text above|above|previous (?:answer|response)|your previous (?:answer|response)|what you just wrote|same content|exactly this|use this content|this content|this)\b/i;
 const EDIT_ACTION = /\b(?:shorten|condense|summari[sz]e|rewrite|rephrase|expand|translate|remove|change|edit|revise|adjust)\b/i;
 
@@ -386,10 +393,15 @@ export function editableBlocksForRequest(blocks: ExistingContentBlock[], message
 export function resolveExistingContentRequest(input: {
   message: string;
   format: ArtifactFormat;
-  history: Array<{ role: "user" | "assistant"; content: string }>;
+  history: ExistingContentHistoryEntry[];
 }): ExistingContentRequest | null {
   if (input.format === "xlsx" || !referencesExistingContent(input.message)) return null;
-  const sourceMessage = [...input.history].reverse().find((entry) => entry.role === "assistant" && entry.content.trim())?.content;
+  const sourceMessage = [...input.history].reverse().find((entry) => (
+    entry.role === "assistant"
+    && entry.variant !== "error"
+    && !entry.artifact
+    && entry.content.trim()
+  ))?.content;
   if (!sourceMessage) return null;
   const blocks = parseExistingContent(sourceMessage);
   if (!blocks.length) return null;

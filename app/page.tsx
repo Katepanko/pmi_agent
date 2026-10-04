@@ -4,10 +4,12 @@ import { PMIWorkspace } from "./pmi-workspace";
 export const dynamic = "force-dynamic";
 
 export default function Home() {
-  const models = getModelRegistry().map(({ key, displayName, provider, available, unavailableReason }) => ({
+  const models = getModelRegistry().map(({ key, displayName, provider, contextLabel, description, available, unavailableReason }) => ({
     key,
     displayName,
     provider,
+    contextLabel,
+    description,
     available,
     unavailableReason,
   }));

@@ -47,6 +47,9 @@ test("routes explicit artifact requests and keeps normal chat conversational", (
   assert.equal(detectArtifactRequest("Build a management PDF report."), "pdf");
   assert.equal(detectArtifactRequest("Create a standalone HTML dashboard."), "html");
   assert.equal(detectArtifactRequest("Generate a concise 8-slide PowerPoint deck."), "pptx");
+  assert.equal(detectArtifactRequest("Save this text into a Word file."), "docx");
+  assert.equal(detectArtifactRequest("Save the previous answer as a PowerPoint."), "pptx");
+  assert.equal(detectArtifactRequest("Save this as a PDF."), "pdf");
   assert.equal(detectArtifactRequest("Summarize the current integration status."), null);
   assert.equal(detectArtifactRequest("Change the title and highlight the critical risks.", "pdf"), "pdf");
 });

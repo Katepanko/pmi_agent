@@ -92,6 +92,10 @@ test("exposes configured model display names without leaking secrets", async () 
   assert.equal(response.status, 200);
   const body = await response.json();
   assert.deepEqual(body.models.map((model) => model.key), [
+    "openai-gpt61-sol",
+    "openai-gpt56-sol",
+    "anthropic-claude-opus55",
+    "anthropic-claude-sonnet55",
     "anthropic-sonnet",
     "anthropic-opus",
     "openai-gpt55",
@@ -195,4 +199,8 @@ test("keeps grounding, artifacts, and tenant boundaries explicit in source", asy
   assert.doesNotMatch(workspace, />Needs work</);
   assert.doesNotMatch(workspace, />Export</);
   assert.match(workspace, /navigator\.clipboard\.writeText\(message\.content\)/);
+  assert.match(workspace, /project-name-editor/);
+  assert.match(workspace, /Save project name/);
+  assert.match(workspace, /context-name-field/);
+  assert.match(workspace, /Save project/);
 });

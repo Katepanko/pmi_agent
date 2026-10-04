@@ -43,7 +43,7 @@ export class AnthropicProvider implements LLMProvider {
         system: request.system,
         messages: request.messages,
         max_tokens: request.structuredOutput ? 12_000 : 8_000,
-        ...anthropicStructuredOutputRequest(request.structuredOutput),
+        ...anthropicStructuredOutputRequest(request.structuredOutput, request.model.modelId),
         stream,
       }),
       signal: request.signal,

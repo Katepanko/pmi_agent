@@ -91,13 +91,24 @@ test("OpenAI artifact requests send the Responses API text.format schema", () =>
   assert.equal(requestBody.max_output_tokens, 12_000);
 });
 
-test("Anthropic artifact requests force a schema-backed tool result", () => {
+test("older Anthropic models force a schema-backed tool result", () => {
   const structuredOutput = artifactStructuredOutput("pptx");
-  const requestBody = anthropicStructuredOutputRequest(structuredOutput);
+  const requestBody = anthropicStructuredOutputRequest(structuredOutput, "claude-opus-5");
 
   assert.equal(requestBody.tools[0].name, "pmi_presentation");
   assert.equal(requestBody.tools[0].input_schema.additionalProperties, false);
   assert.deepEqual(requestBody.tool_choice, { type: "tool", name: "pmi_presentation" });
+});
+
+test("Claude 5.5 artifact requests use native JSON output without forced tool choice", () => {
+  const structuredOutput = artifactStructuredOutput("pptx");
+  const requestBody = anthropicStructuredOutputRequest(structuredOutput, "claude-opus-5-5");
+
+  assert.equal(requestBody.output_config.format.type, "json_schema");
+  assert.equal(requestBody.output_config.format.schema.additionalProperties, false);
+  assert.equal(requestBody.output_config.format.schema.properties.slides.items.properties.templateSlide.minimum, undefined);
+  assert.equal("tools" in requestBody, false);
+  assert.equal("tool_choice" in requestBody, false);
 });
 
 test("Anthropic artifact generation serializes tool input instead of parsing model-authored JSON text", () => {
@@ -106,6 +117,12 @@ test("Anthropic artifact generation serializes tool input instead of parsing mod
     name: "pmi_presentation",
     input: JSON.parse(validPresentation),
   }], "pmi_presentation");
+
+  assert.deepEqual(JSON.parse(raw), JSON.parse(validPresentation));
+});
+
+test("Claude 5.5 artifact generation reads native structured JSON from text content", () => {
+  const raw = extractAnthropicResponse([{ type: "text", text: validPresentation }], "pmi_presentation");
 
   assert.deepEqual(JSON.parse(raw), JSON.parse(validPresentation));
 });

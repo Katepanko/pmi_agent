@@ -1,6 +1,6 @@
 export type ArtifactFormat = "pptx" | "xlsx" | "docx" | "pdf" | "html";
 
-const REQUEST_ACTION = /\b(create|generate|prepare|make|build|produce|turn|draft|develop|put together|export|need|want)\b/i;
+const REQUEST_ACTION = /\b(create|generate|prepare|make|build|produce|turn|draft|develop|put together|export|save|need|want)\b/i;
 const REVISION_ACTION = /\b(change|revise|update|edit|adjust|refine|replace|remove|add|rework|highlight|include|split|make)\b/i;
 
 const FORMAT_PATTERNS: Array<[ArtifactFormat, RegExp]> = [

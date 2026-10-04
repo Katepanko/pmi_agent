@@ -8,6 +8,8 @@ type ModelOption = {
   key: string;
   displayName: string;
   provider: string;
+  contextLabel?: string;
+  description?: string;
   available: boolean;
   unavailableReason?: string;
 };
@@ -159,6 +161,8 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
   const [isGenerating, setIsGenerating] = useState(false);
   const [workspaceDirty, setWorkspaceDirty] = useState(false);
   const [selectedModel, setSelectedModel] = useState(initialModels.find((model) => model.key === "openai-gpt56")?.key ?? initialModels[0]?.key ?? "openai-gpt56");
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
+  const [projectNameDraft, setProjectNameDraft] = useState("");
   const abortRef = useRef<AbortController | null>(null);
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -298,7 +302,7 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
     const submittedChatId = activeChat.id;
     const assistantId = uid("message");
     const combinedSources = [...activeChat.sources, ...queuedFiles];
-    const history = activeChat.messages.map(({ role, content }) => ({ role, content }));
+    const history = activeChat.messages.map(({ role, content, artifact, variant }) => ({ role, content, artifact: Boolean(artifact), variant }));
     updateChat(submittedChatId, (chat) => ({
       ...chat,
       modelKey: selectedModel,
@@ -452,12 +456,30 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
     setWorkspaceDirty(true);
   };
 
-  const renameProject = (project: Project) => {
-    const name = window.prompt("Rename project", project.name)?.trim();
+  const saveProjectName = (project: Project, value: string) => {
+    const name = value.trim();
     if (!name || name === project.name) return;
     const monogram = name.split(/\s+/).slice(0, 2).map((word) => word[0]).join("").toUpperCase();
     setProjects((current) => current.map((item) => item.id === project.id ? { ...item, name, monogram: monogram || "PM" } : item));
     setWorkspaceDirty(true);
+  };
+
+  const renameProject = (project: Project) => {
+    const name = window.prompt("Rename project", project.name);
+    if (name === null) return;
+    saveProjectName(project, name);
+  };
+
+  const startProjectNameEdit = (project: Project) => {
+    setProjectNameDraft(project.name);
+    setEditingProjectId(project.id);
+  };
+
+  const submitProjectName = (event: FormEvent<HTMLFormElement>, project: Project) => {
+    event.preventDefault();
+    if (!projectNameDraft.trim()) return;
+    saveProjectName(project, projectNameDraft);
+    setEditingProjectId(null);
   };
 
   const deleteProject = (project: Project) => {
@@ -569,17 +591,37 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
         <header className="chat-header">
           <div className="header-title-group">
             {sidebarCollapsed && <button className="icon-button sidebar-open" onClick={() => setSidebarCollapsed(false)} aria-label="Open sidebar">›</button>}
-            <div>
-              <div className="eyebrow">{activeProject ? activeProject.name : "Standalone chat"}</div>
+            <div className="header-copy">
+              {activeProject && editingProjectId === activeProject.id ? (
+                <form className="project-name-editor" onSubmit={(event) => submitProjectName(event, activeProject)}>
+                  <input
+                    value={projectNameDraft}
+                    onChange={(event) => setProjectNameDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") setEditingProjectId(null);
+                    }}
+                    aria-label="Project name"
+                    autoFocus
+                  />
+                  <button type="submit" disabled={!projectNameDraft.trim()} aria-label="Save project name">Save</button>
+                  <button type="button" onClick={() => setEditingProjectId(null)} aria-label="Cancel project rename">Cancel</button>
+                </form>
+              ) : activeProject ? (
+                <button className="project-name-trigger eyebrow" onClick={() => startProjectNameEdit(activeProject)} aria-label={`Rename project ${activeProject.name}`}>
+                  <span>{activeProject.name}</span><span aria-hidden="true">✎</span>
+                </button>
+              ) : (
+                <div className="eyebrow">Standalone chat</div>
+              )}
               <h1>{activeChat.title}</h1>
             </div>
           </div>
 
           <div className="header-controls">
-            <label className="model-select-wrap">
+            <label className="model-select-wrap" title={[selectedModelOption?.contextLabel, selectedModelOption?.description].filter(Boolean).join(" · ") || undefined}>
               <span className={`provider-dot ${selectedModelOption?.provider ?? "openai"}`} />
               <select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)} aria-label="AI model">
-                {initialModels.map((model) => <option key={model.key} value={model.key}>{model.displayName}{model.available ? "" : " · setup"}</option>)}
+                {initialModels.map((model) => <option key={model.key} value={model.key}>{model.displayName}{model.contextLabel ? ` · ${model.contextLabel}` : ""}{model.available ? "" : " · setup"}</option>)}
               </select>
               <span className="select-chevron">⌄</span>
             </label>
@@ -680,7 +722,14 @@ export function PMIWorkspace({ initialModels }: { initialModels: ModelOption[] }
               {sourceOpen ? (
                 <SourceDrawer sources={activeChat.sources} coverageComplete={coverageComplete} />
               ) : activeProject ? (
-                <ContextDrawer project={activeProject} onChange={updateProjectContext} />
+                <ContextDrawer
+                  key={activeProject.id}
+                  project={activeProject}
+                  onSave={(name, context) => {
+                    saveProjectName(activeProject, name);
+                    updateProjectContext(context);
+                  }}
+                />
               ) : null}
             </aside>
           )}
@@ -855,16 +904,25 @@ function SourceDrawer({ sources, coverageComplete }: { sources: Attachment[]; co
   );
 }
 
-function ContextDrawer({ project, onChange }: { project: Project; onChange: (value: string) => void }) {
+function ContextDrawer({ project, onSave }: { project: Project; onSave: (name: string, context: string) => void }) {
+  const [name, setName] = useState(project.name);
   const [value, setValue] = useState(project.context);
+
   return (
-    <div className="drawer-content context-drawer">
+    <form className="drawer-content context-drawer" onSubmit={(event) => {
+      event.preventDefault();
+      if (!name.trim()) return;
+      onSave(name, value);
+    }}>
       <div className="context-project-mark">{project.monogram}</div>
-      <h3>{project.name}</h3>
+      <label className="context-name-field">
+        <span>Project name</span>
+        <input value={name} onChange={(event) => setName(event.target.value)} aria-label="Project name" />
+      </label>
       <p>Project context is inherited by every chat in this project and isolated from all other projects.</p>
       <label><span>Integration context</span><textarea value={value} onChange={(event) => setValue(event.target.value)} rows={10} /></label>
-      <button className="save-context" onClick={() => onChange(value)}>Save context</button>
+      <button className="save-context" type="submit" disabled={!name.trim()}>Save project</button>
       <div className="boundary-note"><strong>Knowledge boundary</strong><span>Project ID: {project.id}</span><p>Standalone chats and other projects do not inherit this context.</p></div>
-    </div>
+    </form>
   );
 }

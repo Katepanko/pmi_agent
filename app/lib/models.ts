@@ -5,6 +5,8 @@ export type ModelRegistryEntry = {
   displayName: string;
   provider: ProviderName;
   modelId: string;
+  contextLabel?: string;
+  description?: string;
   available: boolean;
   unavailableReason?: string;
 };
@@ -12,6 +14,10 @@ export type ModelRegistryEntry = {
 type RuntimeConfig = Record<string, string | undefined>;
 
 const definitions = [
+  ["openai-gpt61-sol", "GPT-6.1 Sol", "openai", "OPENAI_GPT61_SOL_MODEL", "1.05M context", "Excellent for long-document analysis"],
+  ["openai-gpt56-sol", "GPT-5.6 Sol", "openai", "OPENAI_GPT56_SOL_MODEL", "1.05M context", "Very strong for document analysis"],
+  ["anthropic-claude-opus55", "Claude Opus 5.5", "anthropic", "ANTHROPIC_CLAUDE_OPUS55_MODEL", "Long context", "Best Anthropic option for deep document analysis"],
+  ["anthropic-claude-sonnet55", "Claude Sonnet 5.5", "anthropic", "ANTHROPIC_CLAUDE_SONNET55_MODEL", "Long context", "Strong quality/cost option"],
   ["anthropic-sonnet", "Anthropic Sonnet 5", "anthropic", "ANTHROPIC_SONNET_MODEL"],
   ["anthropic-opus", "Anthropic Opus 5", "anthropic", "ANTHROPIC_OPUS_MODEL"],
   ["openai-gpt55", "GPT-5.5", "openai", "OPENAI_GPT55_MODEL"],
@@ -20,7 +26,7 @@ const definitions = [
 ] as const;
 
 export function getModelRegistry(config: RuntimeConfig = process.env): ModelRegistryEntry[] {
-  return definitions.map(([key, displayName, provider, modelEnv]) => {
+  return definitions.map(([key, displayName, provider, modelEnv, contextLabel, description]) => {
     const modelId = config[modelEnv]?.trim() ?? "";
     const keyEnv = provider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY";
     const hasKey = Boolean(config[keyEnv]?.trim());
@@ -32,6 +38,8 @@ export function getModelRegistry(config: RuntimeConfig = process.env): ModelRegi
       displayName,
       provider,
       modelId,
+      contextLabel,
+      description,
       available,
       unavailableReason: available ? undefined : `Configure ${missing.join(" and ")}`,
     };

@@ -18,7 +18,13 @@ import {
 } from "docx";
 import PptxGenJS from "pptxgenjs";
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
-import { DELOITTE_LOGO_DATA_URI, deloitteLogoBytes, DeloitteBrand } from "../branding/deloitte.ts";
+import {
+  applyDeloittePowerPointTemplate,
+  DELOITTE_LOGO_DATA_URI,
+  deloitteLogoBytes,
+  DeloitteBrand,
+  validateDeloittePowerPoint,
+} from "../branding/deloitte.ts";
 import {
   assertVisualizationDataIntegrity,
   defaultExistingContentDesignPlan,
@@ -157,7 +163,10 @@ async function renderDocx(blocks: ExistingContentBlock[], plan: ExistingContentD
     sections: [{
       properties: { page: { margin: { top: 900, right: 850, bottom: 850, left: 850 } } },
       headers: { default: new Header({ children: [new Paragraph({ children: [new ImageRun({ data: deloitteLogoBytes(), transformation: { width: 132, height: 25 }, type: "png" })] })] }) },
-      footers: { default: new Footer({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ children: [PageNumber.CURRENT], color: DeloitteBrand.colors.coolGray, size: 16 })] })] }) },
+      footers: { default: new Footer({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [
+        new TextRun({ text: `${DeloitteBrand.footer.copyright()}  •  ${DeloitteBrand.footer.confidentiality}  •  `, color: DeloitteBrand.colors.coolGray, size: 16, font: "Aptos" }),
+        new TextRun({ children: [PageNumber.CURRENT], color: DeloitteBrand.colors.coolGray, size: 16, font: "Aptos" }),
+      ] })] }) },
       children,
     }],
   });
@@ -174,15 +183,30 @@ async function renderPptx(blocks: ExistingContentBlock[], plan: ExistingContentD
   pptx.theme = { headFontFace: "Aptos Display", bodyFontFace: "Aptos" };
   const byId = new Map(blocks.map((block) => [block.id, block]));
   const metrics = deriveLockedMetrics(blocks);
-  const pages = [...new Set(plan.placements.map((placement) => placement.page))].sort((a, b) => a - b);
-  pages.forEach((pageNumber, slideIndex) => {
-    const placements = plan.placements.filter((placement) => placement.page === pageNumber);
+  const titlePlacementIndex = plan.placements.findIndex((placement) => placement.component === "title");
+  const titleBlockId = titlePlacementIndex >= 0 ? plan.placements[titlePlacementIndex].blockIds[0] : null;
+  const deckTitle = titleBlockId ? byId.get(titleBlockId)?.text ?? titleFor(blocks) : titleFor(blocks);
+  const contentPlacements = plan.placements.flatMap((placement, index) => {
+    if (index !== titlePlacementIndex || !titleBlockId) return [placement];
+    const remainingIds = placement.blockIds.filter((id) => id !== titleBlockId);
+    return remainingIds.length ? [{ ...placement, blockIds: remainingIds, component: "body" as const }] : [];
+  });
+  const pages = [...new Set([
+    ...contentPlacements.map((placement) => placement.page),
+    ...plan.visualizations.map((visualization) => visualization.page),
+  ])].sort((a, b) => a - b);
+  const totalSlides = pages.length + 1;
+
+  const generatedCover = pptx.addSlide();
+  generatedCover.background = { color: "000000" };
+  generatedCover.addText(deckTitle, { x: 0.82, y: 1.35, w: 10.9, h: 1.75, fontFace: "Aptos Display", fontSize: 32, bold: true, color: "FFFFFF", margin: 0, fit: "shrink" });
+
+  pages.forEach((pageNumber) => {
+    const placements = contentPlacements.filter((placement) => placement.page === pageNumber);
     const slide = pptx.addSlide();
-    const cover = placements.length === 1 && placements[0].component === "title";
-    slide.background = { color: cover ? "000000" : "FFFFFF" };
-    slide.addShape("rect", { x: 0, y: 0, w: cover ? 13.333 : 0.16, h: cover ? 0.14 : 7.5, line: { transparency: 100 }, fill: { color: DeloitteBrand.colors.deepGreen } });
-    slide.addImage({ data: DELOITTE_LOGO_DATA_URI, x: cover ? 10.9 : 11.1, y: 0.34, w: 1.45, h: 0.27 });
-    let y = cover ? 1.3 : 0.72;
+    slide.background = { color: "FFFFFF" };
+    slide.addShape("rect", { x: 0, y: 0, w: 0.16, h: 7.5, line: { transparency: 100 }, fill: { color: DeloitteBrand.colors.deepGreen } });
+    let y = 0.72;
     for (const placement of placements) {
       for (const id of placement.blockIds) {
         const block = byId.get(id)!;
@@ -195,7 +219,7 @@ async function renderPptx(blocks: ExistingContentBlock[], plan: ExistingContentD
           continue;
         }
         const lines = Math.max(1, Math.ceil(block.text.length / (heading ? 65 : 105)));
-        const height = placement.component === "executive_message" ? Math.min(1.55, Math.max(0.72, lines * 0.3 + 0.3)) : Math.min(cover ? 2.2 : heading ? 1.05 : 1.4, Math.max(heading ? 0.48 : 0.34, lines * (heading ? 0.38 : 0.24)));
+        const height = placement.component === "executive_message" ? Math.min(1.55, Math.max(0.72, lines * 0.3 + 0.3)) : Math.min(heading ? 1.05 : 1.4, Math.max(heading ? 0.48 : 0.34, lines * (heading ? 0.38 : 0.24)));
         if (placement.component === "executive_message" || placement.component === "callout") {
           slide.addShape("roundRect", { x, y: y - 0.08, w, h: height + 0.18, rectRadius: 0.04, line: { color: "D6E6C3", pt: 0.7 }, fill: { color: "F1F6E4" } });
           slide.addShape("rect", { x, y: y - 0.08, w: 0.08, h: height + 0.18, line: { transparency: 100 }, fill: { color: DeloitteBrand.colors.deepGreen } });
@@ -205,10 +229,10 @@ async function renderPptx(blocks: ExistingContentBlock[], plan: ExistingContentD
         slide.addText(richText, {
           x: x + (placement.component === "executive_message" || placement.component === "callout" ? 0.25 : 0), y, w: w - (placement.component === "executive_message" || placement.component === "callout" ? 0.4 : 0), h: height,
           fontFace: block.kind === "code" ? "Aptos Mono" : heading ? "Aptos Display" : "Aptos",
-          fontSize: cover ? 32 : heading ? Math.max(18, 27 - ((block.level ?? 1) - 1) * 2) : placement.emphasis === "high" ? 16 : 13.5,
-          bold: heading || placement.emphasis === "high", italic: block.kind === "quote", color: cover ? "FFFFFF" : heading ? "000000" : "313131", margin: 0, valign: "top", fit: "shrink",
+          fontSize: heading ? Math.max(18, 27 - ((block.level ?? 1) - 1) * 2) : placement.emphasis === "high" ? 16 : 13.5,
+          bold: heading || placement.emphasis === "high", italic: block.kind === "quote", color: heading ? "000000" : "313131", margin: 0, valign: "top", fit: "shrink",
         });
-        if (heading && !cover) slide.addShape("line", { x, y: y + height + 0.03, w: Math.min(w, 2.1), h: 0, line: { color: DeloitteBrand.colors.green, width: 2.2 } });
+        if (heading) slide.addShape("line", { x, y: y + height + 0.03, w: Math.min(w, 2.1), h: 0, line: { color: DeloitteBrand.colors.green, width: 2.2 } });
         y += height + (heading ? 0.25 : 0.18);
       }
     }
@@ -234,12 +258,19 @@ async function renderPptx(blocks: ExistingContentBlock[], plan: ExistingContentD
         });
       }
     }
-    slide.addText(`${slideIndex + 1} / ${pages.length}`, { x: 11.72, y: 7.12, w: 0.8, h: 0.16, fontFace: "Aptos", fontSize: 7, color: cover ? "8FA096" : DeloitteBrand.colors.coolGray, align: "right", margin: 0 });
   });
   const result = await pptx.write({ outputType: "uint8array", compression: true });
-  const bytes = result instanceof Uint8Array ? result : result instanceof ArrayBuffer ? new Uint8Array(result) : result instanceof Blob ? new Uint8Array(await result.arrayBuffer()) : null;
-  if (!bytes) throw new Error("The PowerPoint renderer returned an unsupported output type.");
-  return { format: "pptx", mimeType: MIME.pptx, filename, bytes, unitCount: pages.length, unitLabel: "slides", renderedTextBlocks: blocks.map((block) => block.text) };
+  const generated = result instanceof Uint8Array ? result : result instanceof ArrayBuffer ? new Uint8Array(result) : result instanceof Blob ? new Uint8Array(await result.arrayBuffer()) : null;
+  if (!generated) throw new Error("The PowerPoint renderer returned an unsupported output type.");
+  const bytes = applyDeloittePowerPointTemplate({
+    generated,
+    title: deckTitle,
+    subtitle: "Generated from the latest PMI Agent answer",
+    audience: "Management",
+    slideCount: totalSlides,
+  });
+  validateDeloittePowerPoint(bytes, { title: deckTitle, slideCount: totalSlides, metadata: ["Generated from the latest PMI Agent answer", "Management"] });
+  return { format: "pptx", mimeType: MIME.pptx, filename, bytes, unitCount: totalSlides, unitLabel: "slides", renderedTextBlocks: blocks.map((block) => block.text) };
 }
 
 function wrapPdf(text: string, font: PDFFont, size: number, width: number) {
@@ -365,6 +396,12 @@ async function renderPdf(blocks: ExistingContentBlock[], plan: ExistingContentDe
       });
     }
   }
+  document.getPages().forEach((target, index, pages) => {
+    target.drawLine({ start: { x: PAGE.left, y: 31 }, end: { x: PAGE.width - PAGE.right, y: 31 }, thickness: 0.5, color: rgb(0.82, 0.82, 0.81) });
+    target.drawText(`${DeloitteBrand.footer.copyright()}  •  ${DeloitteBrand.footer.confidentiality}`, { x: PAGE.left, y: 18, size: 7.5, font: regular, color: rgb(0.46, 0.47, 0.48) });
+    const count = `${index + 1} / ${pages.length}`;
+    target.drawText(count, { x: PAGE.width - PAGE.right - regular.widthOfTextAtSize(count, 7.5), y: 18, size: 7.5, font: regular, color: rgb(0.46, 0.47, 0.48) });
+  });
   const bytes = await document.save({ useObjectStreams: false });
   return { format: "pdf", mimeType: MIME.pdf, filename, bytes, unitCount: pageCount, unitLabel: "pages", renderedTextBlocks: blocks.map((block) => block.text) };
 }

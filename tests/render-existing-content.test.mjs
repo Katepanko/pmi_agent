@@ -54,8 +54,23 @@ test("PowerPoint export keeps previous-answer wording while distributing blocks 
   const rendered = await renderExistingContent({ format: "pptx", blocks: request.blocks, version: 1 });
   assert.deepEqual(rendered.renderedTextBlocks, ["Board update", "Overall integration progress is 78%.", "Risk", "ERP go-live remains at risk."]);
   const zip = unzipSync(rendered.bytes);
+  assert.match(new TextDecoder().decode(zip["ppt/slideMasters/slideMaster1.xml"]), /Deloitte logo/);
   const slideText = Object.keys(zip).filter((path) => /^ppt\/slides\/slide\d+\.xml$/.test(path)).sort().map((path) => xmlText(rendered.bytes, path, "")).join("\n");
   for (const block of request.blocks) assert.ok(slideText.includes(block.text));
+});
+
+test("previous answer skips artifact confirmations and failed responses", () => {
+  const request = resolveExistingContentRequest({
+    message: "Save the previous answer as a PDF.",
+    format: "pdf",
+    history: [
+      { role: "assistant", content: "# Substantive answer\n\nThis is the content to preserve." },
+      { role: "assistant", content: "I created the Word document.", artifact: true },
+      { role: "assistant", content: "File generation failed", variant: "error" },
+    ],
+  });
+  assert.ok(request);
+  assert.equal(request.sourceMessage, "# Substantive answer\n\nThis is the content to preserve.");
 });
 
 test("Markdown becomes native heading, bullet, bold, and table formatting", async () => {
